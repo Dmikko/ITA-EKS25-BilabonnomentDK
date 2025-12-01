@@ -275,29 +275,51 @@ def page_admin():
 # ---- Layout & navigation ----
 
 def render_sidebar():
-    st.sidebar.title("Navigation")
-
     user = st.session_state.user
     role = st.session_state.role
 
-    if user:
-        st.sidebar.write(f"Logget ind som: **{user['username']}** ({role})")
+    with st.sidebar:
+        if user:
+            st.write(f"Logget ind som: **{user['username']}** ({role})")
+            st.markdown("### Menu")
 
-        page = st.sidebar.radio(
-            "Vælg side",
-            ["Dashboard", "Lejeaftaler", "Skader", "Admin"],
-            key="nav_radio",
-        )
-        st.session_state.page = page
+            # Byg menuen (admin kun for ADMIN/LEDELSE)
+            menu_options = {
+                "Dashboard": "📊 Dashboard",
+                "Lejeaftaler": "🚗 Lejeaftaler",
+                "Skader": "🛠️ Skader",
+            }
+            if role in ("ADMIN", "LEDELSE"):
+                menu_options["Admin"] = "👤 Admin"
 
-        if st.sidebar.button("Log ud"):
-            st.session_state.token = None
-            st.session_state.user = None
-            st.session_state.role = None
-            st.session_state.page = "Dashboard"
-            st.experimental_rerun()
-    else:
-        st.sidebar.info("Log ind for at få adgang.")
+            keys = list(menu_options.keys())
+            labels = list(menu_options.values())
+
+            # Find default index ud fra nuværende side
+            current_page = st.session_state.page or "Dashboard"
+            try:
+                default_idx = keys.index(current_page)
+            except ValueError:
+                default_idx = 0
+
+            choice = st.radio(
+                "Navigation",
+                labels,
+                index=default_idx,
+            )
+
+            # Reverse lookup: label -> key
+            selected_page = keys[labels.index(choice)]
+            st.session_state.page = selected_page
+
+            if st.button("Log ud"):
+                st.session_state.token = None
+                st.session_state.user = None
+                st.session_state.role = None
+                st.session_state.page = "Dashboard"
+                st.rerun()
+        else:
+            st.info("Log ind for at få adgang.")
 
 
 def render_login():
@@ -314,7 +336,7 @@ def render_login():
             st.session_state.user = user
             st.session_state.role = user["role"]
             st.success("Login lykkedes")
-            st.experimental_rerun()
+            st.rerun()
 
 
 def main():
