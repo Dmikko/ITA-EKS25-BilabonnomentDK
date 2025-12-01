@@ -1,0 +1,63 @@
+
+services:
+  auth_service:
+    build: ./services/auth_service
+    container_name: auth_service
+    ports:
+      - "5001:5001"
+    environment:
+      - AUTH_SECRET=supersecret
+    volumes:
+      - ./services/auth_service/auth.db:/app/auth.db
+
+  lease_service:
+    build: ./services/lease_service
+    container_name: lease_service
+    ports:
+      - "5002:5002"
+    volumes:
+      - ./services/lease_service/lease.db:/app/lease.db
+
+  damage_service:
+    build: ./services/damage_service
+    container_name: damage_service
+    ports:
+      - "5003:5003"
+    volumes:
+      - ./services/damage_service/damage.db:/app/damage.db
+
+  reporting_service:
+    build: ./services/reporting_service
+    container_name: reporting_service
+    ports:
+      - "5004:5004"
+    environment:
+      - GATEWAY_BASE_URL=http://gateway:8000
+    # vigtigst: INGEN depends_on til gateway, ellers cycle
+
+  gateway:
+    build: ./gateway
+    container_name: gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - AUTH_BASE_URL=http://auth_service:5001
+      - LEASE_BASE_URL=http://lease_service:5002
+      - DAMAGE_BASE_URL=http://damage_service:5003
+      - REPORT_BASE_URL=http://reporting_service:5004
+      - AUTH_SECRET=supersecret
+    depends_on:
+      - auth_service
+      - lease_service
+      - damage_service
+      - reporting_service
+
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    ports:
+      - "8501:8501"
+    environment:
+      - GATEWAY_BASE_URL=http://gateway:8000
+    depends_on:
+      - gateway

@@ -1,0 +1,94 @@
+from flask import Flask, request, jsonify
+from database import (
+    init_db,
+    create_damage,
+    list_damages,
+    get_damage_by_id,
+    update_damage_status,
+)
+
+app = Flask(__name__)
+
+
+@app.before_request
+def setup():
+    init_db()
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "service": "damage_service"}
+
+
+@app.get("/damages")
+def get_damages():
+    status = request.args.get("status")
+    lease_id = request.args.get("lease_id")
+
+    lease_id_int = None
+    if lease_id is not None:
+        try:
+            lease_id_int = int(lease_id)
+        except ValueError:
+            return jsonify({"error": "lease_id must be an integer"}), 400
+
+    rows = list_damages(status=status, lease_id=lease_id_int)
+    damages = [dict(row) for row in rows]
+    return jsonify(damages)
+
+
+@app.get("/damages/<int:damage_id>")
+def get_damage(damage_id):
+    row = get_damage_by_id(damage_id)
+    if row is None:
+        return jsonify({"error": "damage not found"}), 404
+    return jsonify(dict(row))
+
+
+@app.post("/damages")
+def create_damage_endpoint():
+    data = request.get_json() or {}
+
+    required = ["lease_id", "category", "description", "estimated_cost"]
+    missing = [field for field in required if field not in data]
+    if missing:
+        return jsonify({"error": f"Missing fields: {', '.join(missing)}"}), 400
+
+    try:
+        lease_id = int(data["lease_id"])
+        data["lease_id"] = lease_id
+    except (ValueError, TypeError):
+        return jsonify({"error": "lease_id must be an integer"}), 400
+
+    try:
+        data["estimated_cost"] = float(data["estimated_cost"])
+    except (ValueError, TypeError):
+        return jsonify({"error": "estimated_cost must be a number"}), 400
+
+    try:
+        damage_id = create_damage(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+    row = get_damage_by_id(damage_id)
+    return jsonify(dict(row)), 201
+
+
+@app.patch("/damages/<int:damage_id>/status")
+def change_damage_status(damage_id):
+    data = request.get_json() or {}
+    new_status = data.get("status")
+    if not new_status:
+        return jsonify({"error": "status required"}), 400
+
+    row = get_damage_by_id(damage_id)
+    if row is None:
+        return jsonify({"error": "damage not found"}), 404
+
+    update_damage_status(damage_id, new_status)
+    row = get_damage_by_id(damage_id)
+    return jsonify(dict(row)), 200
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5003, debug=True)

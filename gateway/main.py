@@ -9,17 +9,31 @@ app = Flask(__name__)
 # Disse kan du overskrive med env vars, fx når I bruger Docker
 AUTH_BASE = os.getenv("AUTH_BASE_URL", "http://localhost:5001")
 LEASE_BASE = os.getenv("LEASE_BASE_URL", "http://localhost:5002")
+DAMAGE_BASE = os.getenv("DAMAGE_BASE_URL", "http://localhost:5003")
+REPORT_BASE = os.getenv("REPORT_BASE_URL", "http://localhost:5004")
+
 
 # SKAL matche SECRET i AuthService
 AUTH_SECRET = os.getenv("AUTH_SECRET", "supersecret")
 
 # Simple mapping: (method, path_prefix) -> tilladte roller
 ROUTE_PERMISSIONS = {
-    ("GET", "/leases"): ["DATAREG", "SKADE", "FORRET", "LEDELSE"],
-    ("POST", "/leases"): ["DATAREG"],
-    ("GET", "/leases/"): ["DATAREG", "SKADE", "FORRET", "LEDELSE"],  # /leases/<id>
-    ("PATCH", "/leases/"): ["DATAREG", "LEDELSE"],                    # /leases/<id>/status
+    ("GET", "/leases"): ["DATAREG", "SKADE", "FORRET", "LEDELSE", "ADMIN"],
+    ("POST", "/leases"): ["DATAREG", "LEDELSE", "ADMIN"],
+    ("GET", "/leases/"): ["DATAREG", "SKADE", "FORRET", "LEDELSE", "ADMIN"],  # /leases/<id>
+    ("PATCH", "/leases/"): ["DATAREG", "LEDELSE", "ADMIN"],                    # /leases/<id>/status
     # Auth-ruter styres inde i AuthService
+
+    # Nye: damages
+    ("GET", "/damages"): ["SKADE", "FORRET", "LEDELSE", "ADMIN"],
+    ("POST", "/damages"): ["SKADE", "LEDELSE", "ADMIN"],
+    ("GET", "/damages/"): ["SKADE", "FORRET", "LEDELSE", "ADMIN"],   # /damages/<id>
+    ("PATCH", "/damages/"): ["SKADE", "LEDELSE", "ADMIN"],           # /damages/<id>/status
+
+
+
+    # NY: Reporting
+    ("GET", "/reporting/kpi"): ["FORRET", "LEDELSE", "ADMIN"],
 }
 
 
@@ -169,6 +183,48 @@ def gw_change_lease_status(lease_id):
     url = f"{LEASE_BASE}/leases/{lease_id}/status"
     resp = requests.patch(url, json=request.get_json())
     return (resp.content, resp.status_code, resp.headers.items())
+
+
+
+# -------- DAMAGE ROUTES (proxy til DamageService) --------
+
+@app.get("/damages")
+def gw_get_damages():
+    url = f"{DAMAGE_BASE}/damages"
+    resp = requests.get(url, params=request.args)
+    return (resp.content, resp.status_code, resp.headers.items())
+
+
+@app.get("/damages/<int:damage_id>")
+def gw_get_damage(damage_id):
+    url = f"{DAMAGE_BASE}/damages/{damage_id}"
+    resp = requests.get(url)
+    return (resp.content, resp.status_code, resp.headers.items())
+
+
+@app.post("/damages")
+def gw_create_damage():
+    url = f"{DAMAGE_BASE}/damages"
+    resp = requests.post(url, json=request.get_json())
+    return (resp.content, resp.status_code, resp.headers.items())
+
+
+@app.patch("/damages/<int:damage_id>/status")
+def gw_change_damage_status(damage_id):
+    url = f"{DAMAGE_BASE}/damages/{damage_id}/status"
+    resp = requests.patch(url, json=request.get_json())
+    return (resp.content, resp.status_code, resp.headers.items())
+
+
+
+# -------- REPORTING ROUTES (proxy til ReportingService) --------
+
+@app.get("/reporting/kpi/overview")
+def gw_kpi_overview():
+    url = f"{REPORT_BASE}/reporting/kpi/overview"
+    resp = requests.get(url)
+    return (resp.content, resp.status_code, resp.headers.items())
+
 
 
 if __name__ == "__main__":
