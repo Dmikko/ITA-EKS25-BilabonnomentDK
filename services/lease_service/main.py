@@ -19,12 +19,8 @@ app = Flask(__name__)
 def call_rki_check(customer_cpr: str | None):
     """
     Kalder RKI-service. Hvis CPR mangler eller RKI ikke svarer,
-    returnerer vi noget fornuftigt.
-
+    returnerer vi en fornuftig default.
     Returnerer: (status, score, reason)
-    - status: APPROVED / REJECTED / PENDING / SKIPPED / UNKNOWN
-    - score:  optional tal (kan være None hvis RKI ikke sender det)
-    - reason: tekst til debugging/log
     """
     if not customer_cpr:
         return "SKIPPED", None, "CPR mangler"
@@ -44,7 +40,6 @@ def call_rki_check(customer_cpr: str | None):
     except Exception as e:
         # Hvis RKI er nede, vil vi stadig kunne oprette aftale
         return "PENDING", None, f"RKI-fejl: {e}"
-
 
 @app.before_request
 def setup():
@@ -72,7 +67,7 @@ def get_lease(lease_id):
         return jsonify({"error": "lease not found"}), 404
     return jsonify(dict(lease))
 
-
+"""""
 @app.post("/leases")
 def create_lease_endpoint():
     data = request.get_json() or {}
@@ -117,6 +112,45 @@ def create_lease_endpoint():
 
     lease = get_lease_by_id(lease_id)
     return jsonify(dict(lease)), 201
+"""""
+
+@app.post("/leases")
+def create_lease_endpoint():
+    data = request.get_json() or {}
+
+    required = [
+        "customer_name",
+        "customer_email",
+        "car_model",
+        "start_date",
+        "end_date",
+        "monthly_price",
+    ]
+    missing = [field for field in required if field not in data]
+    if missing:
+        return jsonify({"error": f"Missing fields: {', '.join(missing)}"}), 400
+
+    # ---- RKI CHECK ----
+    customer_cpr = data.get("customer_cpr")
+    rki_status, rki_score, rki_reason = call_rki_check(customer_cpr)
+
+    data["rki_status"] = rki_status
+    data["rki_score"] = rki_score
+
+
+    try:
+        lease_id = create_lease(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+    lease = get_lease_by_id(lease_id)
+    lease_dict = dict(lease)
+    lease_dict["rki_reason"] = rki_reason  # ikke i DB, men retur til frontend
+
+    return jsonify(lease_dict), 201
+
+
+
 
 
 @app.patch("/leases/<int:lease_id>/status")

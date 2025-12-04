@@ -2,6 +2,25 @@ import streamlit as st
 import requests
 import os
 
+
+# ---- UI helpers ----
+def rki_badge(status: str):
+    if not status:
+        return "❔ Ukendt"
+
+    status = status.upper()
+
+    colors = {
+        "APPROVED": "green",
+        "REJECTED": "red",
+        "PENDING": "orange",
+        "SKIPPED": "gray"
+    }
+
+    color = colors.get(status, "gray")
+    return f"<span style='color:{color}; font-weight:bold;'>{status}</span>"
+
+
 # ---- Konfiguration ----
 GATEWAY_BASE = os.getenv("GATEWAY_BASE_URL", "http://localhost:8000")
 
@@ -114,6 +133,7 @@ def page_leases():
 
     tab_list, tab_create = st.tabs(["Oversigt", "Opret ny aftale"])
 
+    # ---------- OVERSIGT ----------
     with tab_list:
         st.subheader("Alle lejeaftaler")
         resp = api_get("/leases", token=st.session_state.token)
@@ -124,11 +144,75 @@ def page_leases():
             if not leases:
                 st.info("Ingen lejeaftaler endnu.")
             else:
-                # Simpel tabel
                 for l in leases:
-                    with st.expander(f"Aftale #{l['id']} – {l['customer_name']} – {l['car_model']}"):
-                        st.write(l)
+                    # --- RKI status / ikon til titel ---
+                    status = (l.get("rki_status") or "PENDING").upper()
+                    status_icon = {
+                        "APPROVED": "🟢",
+                        "REJECTED": "🔴",
+                        "PENDING": "🟠",
+                        "SKIPPED": "⚪",
+                    }.get(status, "⚪")
 
+                    expander_label = (
+                        f"Aftale #{l['id']} – {l['customer_name']} – {l['car_model']} "
+                        f"– RKI: {status_icon} {status}"
+                    )
+
+                    with st.expander(expander_label):
+                        # Basis info
+                        st.markdown(
+                            f"**Kunde:** {l['customer_name']} ({l.get('customer_email', '')})"
+                        )
+                        st.markdown(
+                            f"**Bil:** {l['car_model']} ({l.get('car_segment', '-')}), "
+                            f"Reg.nr: {l.get('car_registration', '—')}"
+                        )
+                        st.markdown(
+                            f"**Periode:** {l['start_date']} → {l['end_date']}"
+                        )
+                        st.markdown(
+                            f"**Pris:** {l['monthly_price']} kr./md"
+                        )
+                        st.markdown("---")
+
+                        # --- RKI Section ---
+                        st.markdown("### RKI-vurdering")
+
+                        col_left, col_right = st.columns([1, 2])
+
+                        with col_left:
+                            st.write("**Status:**")
+                            st.write("**Score:**")
+                            st.write("**Tjekket:**")
+
+                        with col_right:
+                            status_html = rki_badge(status)
+                            st.markdown(status_html, unsafe_allow_html=True)
+                            st.write(l.get("rki_score", "—"))
+                            st.write(l.get("rki_checked_at", "—"))
+
+                        # Farvet summary-box
+                        box_color = {
+                            "APPROVED": "#1f8f1f22",
+                            "REJECTED": "#8f1f1f22",
+                            "PENDING": "#f5c54222",
+                            "SKIPPED": "#88888822",
+                        }.get(status, "#88888822")
+
+                        st.markdown(
+                            f"""
+                            <div style='padding:14px; margin-top:12px; border-radius:10px;
+                                 background:{box_color};'>
+                                <b>RKI Status:</b> {status}<br>
+                                <b>Score:</b> {l.get("rki_score","—")}<br>
+                                <b>Tjekket:</b> {l.get("rki_checked_at","—")}
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+    # ---------- OPRET NY AFTALE ----------
     with tab_create:
         if role not in ["DATAREG", "LEDELSE", "ADMIN"]:
             st.info("Kun dataregistrering/ledelse/admin kan oprette aftaler.")
@@ -138,6 +222,7 @@ def page_leases():
             customer_name = st.text_input("Kundenavn")
             customer_email = st.text_input("Kunde-email")
             customer_phone = st.text_input("Kundens telefon")
+            customer_cpr = st.text_input("Kundens CPR-nummer")
             car_model = st.text_input("Bilmodel")
             car_segment = st.text_input("Bilsegment (valgfrit)")
             car_registration = st.text_input("Registreringsnummer (valgfrit)")
@@ -150,6 +235,7 @@ def page_leases():
                     "customer_name": customer_name,
                     "customer_email": customer_email,
                     "customer_phone": customer_phone,
+                    "customer_cpr": customer_cpr,
                     "car_model": car_model,
                     "car_segment": car_segment or None,
                     "car_registration": car_registration or None,
@@ -160,8 +246,10 @@ def page_leases():
                 resp = api_post("/leases", json=payload, token=st.session_state.token)
                 if resp.status_code == 201:
                     st.success("Aftale oprettet")
+                    st.rerun()
                 else:
                     st.error(f"Fejl ved oprettelse: {resp.text}")
+
 
 
 def page_damages():

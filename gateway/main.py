@@ -11,7 +11,8 @@ AUTH_BASE = os.getenv("AUTH_BASE_URL", "http://localhost:5001")
 LEASE_BASE = os.getenv("LEASE_BASE_URL", "http://localhost:5002")
 DAMAGE_BASE = os.getenv("DAMAGE_BASE_URL", "http://localhost:5003")
 REPORT_BASE = os.getenv("REPORT_BASE_URL", "http://localhost:5004")
-RKI_BASE = os.getenv("RKI_BASE_URL", "http://localhost:5005")
+#RKI_BASE = os.getenv("RKI_BASE_URL", "http://localhost:5005")
+RKI_BASE_URL = os.getenv("RKI_BASE_URL", "http://rki_service:5005")
 
 # SKAL matche SECRET i AuthService
 AUTH_SECRET = os.getenv("AUTH_SECRET", "supersecret")
@@ -234,7 +235,7 @@ def gw_kpi_overview():
 
 @app.post("/rki/check")
 def gw_rki_check():
-    url = f"{RKI_BASE}/rki/check"
+    url = f"{RKI_BASE_URL}/rki/check"
     return _safe_forward("POST", url, json=request.get_json())
 
 
