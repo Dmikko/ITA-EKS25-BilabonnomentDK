@@ -6,34 +6,37 @@ import jwt
 app = Flask(__name__)
 
 # ---- Konfiguration ----
-# Disse kan du overskrive med env vars, fx når I bruger Docker
+# Disse kan du overskrive med env vars (Docker bruger dem)
 AUTH_BASE = os.getenv("AUTH_BASE_URL", "http://localhost:5001")
 LEASE_BASE = os.getenv("LEASE_BASE_URL", "http://localhost:5002")
 DAMAGE_BASE = os.getenv("DAMAGE_BASE_URL", "http://localhost:5003")
 REPORT_BASE = os.getenv("REPORT_BASE_URL", "http://localhost:5004")
-
+RKI_BASE = os.getenv("RKI_BASE_URL", "http://localhost:5005")
 
 # SKAL matche SECRET i AuthService
 AUTH_SECRET = os.getenv("AUTH_SECRET", "supersecret")
 
 # Simple mapping: (method, path_prefix) -> tilladte roller
+# path matchet via startswith(), så "/leases/" dækker /leases/<id> osv.
 ROUTE_PERMISSIONS = {
+    # ----- LEASES -----
     ("GET", "/leases"): ["DATAREG", "SKADE", "FORRET", "LEDELSE", "ADMIN"],
+    ("GET", "/leases/"): ["DATAREG", "SKADE", "FORRET", "LEDELSE", "ADMIN"],   # /leases/<id>, /leases/<id>/status
     ("POST", "/leases"): ["DATAREG", "LEDELSE", "ADMIN"],
-    ("GET", "/leases/"): ["DATAREG", "SKADE", "FORRET", "LEDELSE", "ADMIN"],  # /leases/<id>
-    ("PATCH", "/leases/"): ["DATAREG", "LEDELSE", "ADMIN"],                    # /leases/<id>/status
-    # Auth-ruter styres inde i AuthService
+    ("PATCH", "/leases/"): ["DATAREG", "LEDELSE", "ADMIN"],
 
-    # Nye: damages
+    # ----- DAMAGES -----
     ("GET", "/damages"): ["SKADE", "FORRET", "LEDELSE", "ADMIN"],
+    ("GET", "/damages/"): ["SKADE", "FORRET", "LEDELSE", "ADMIN"],
     ("POST", "/damages"): ["SKADE", "LEDELSE", "ADMIN"],
-    ("GET", "/damages/"): ["SKADE", "FORRET", "LEDELSE", "ADMIN"],   # /damages/<id>
-    ("PATCH", "/damages/"): ["SKADE", "LEDELSE", "ADMIN"],           # /damages/<id>/status
+    ("PATCH", "/damages/"): ["SKADE", "LEDELSE", "ADMIN"],
 
-
-
-    # NY: Reporting
+    # ----- REPORTING -----
     ("GET", "/reporting/kpi"): ["FORRET", "LEDELSE", "ADMIN"],
+    ("GET", "/reporting/kpi/overview"): ["FORRET", "LEDELSE", "ADMIN"],
+
+    # ----- RKI -----
+    ("POST", "/rki/check"): ["DATAREG", "FORRET", "LEDELSE", "ADMIN"],
 }
 
 
@@ -64,18 +67,18 @@ def _requires_auth_for_path(method: str, path: str) -> bool:
 
 def _check_role(payload, method: str, path: str):
     """
-    Matcher method + path op imod vores simple ROUTE_PERMISSIONS.
-    Vi matcher på prefix, fx "/leases/" for /leases/<id> og /leases/<id>/status
+    Matcher method + path op imod ROUTE_PERMISSIONS.
+    Vi matcher på prefix, fx "/leases/" for /leases/<id> og /leases/<id>/status.
     """
-    # Find passende key
     for (m, prefix), roles in ROUTE_PERMISSIONS.items():
         if m == method and path.startswith(prefix):
             user_role = payload.get("role")
-            # 👇 SUPER IMPORTANT TIL DEV & ADMIN:
+            # ADMIN må ALT
             if user_role == "ADMIN":
-                return True, None  # admin må ALT
+                return True, None
             if user_role not in roles:
                 return False, f"Role '{user_role}' not allowed for {method} {path}"
+    # Hvis ingen regel matcher, lader vi den passere (kan evt. strammes op senere)
     return True, None
 
 
@@ -95,7 +98,7 @@ def global_auth_check():
     if not ok:
         return jsonify({"error": role_err}), 403
 
-    # Hvis du vil, kan du gemme payload på request-context
+    # Gem claims på request-context hvis vi får brug for det
     request.jwt_payload = payload
     return None
 
@@ -105,24 +108,39 @@ def health():
     return {"status": "ok", "service": "gateway"}
 
 
+# -------- Helper til sikker proxy --------
+
+def _safe_forward(method: str, url: str, **kwargs):
+    """
+    Wrapper omkring requests.* så frontend får pæn JSON,
+    hvis en backend-service er nede.
+    """
+    try:
+        resp = requests.request(method=method, url=url, timeout=5, **kwargs)
+        return resp.content, resp.status_code, resp.headers.items()
+    except requests.exceptions.RequestException as e:
+        return jsonify({
+            "error": "Upstream service unavailable",
+            "upstream_url": url,
+            "details": str(e),
+        }), 503
+
+
 # -------- AUTH ROUTES (proxy til AuthService) --------
 
 @app.post("/auth/login")
 def auth_login():
     url = f"{AUTH_BASE}/login"
-    resp = requests.post(url, json=request.get_json())
-    return (resp.content, resp.status_code, resp.headers.items())
+    return _safe_forward("POST", url, json=request.get_json())
 
 
 @app.get("/auth/me")
 def auth_me():
-    # Forwarder bare token videre til AuthService
     url = f"{AUTH_BASE}/me"
     headers = {
         "Authorization": request.headers.get("Authorization", "")
     }
-    resp = requests.get(url, headers=headers)
-    return (resp.content, resp.status_code, resp.headers.items())
+    return _safe_forward("GET", url, headers=headers)
 
 
 @app.get("/auth/users")
@@ -131,8 +149,7 @@ def auth_users():
     headers = {
         "Authorization": request.headers.get("Authorization", "")
     }
-    resp = requests.get(url, headers=headers)
-    return (resp.content, resp.status_code, resp.headers.items())
+    return _safe_forward("GET", url, headers=headers)
 
 
 @app.post("/auth/users")
@@ -141,8 +158,7 @@ def auth_create_user():
     headers = {
         "Authorization": request.headers.get("Authorization", "")
     }
-    resp = requests.post(url, headers=headers, json=request.get_json())
-    return (resp.content, resp.status_code, resp.headers.items())
+    return _safe_forward("POST", url, headers=headers, json=request.get_json())
 
 
 @app.patch("/auth/users/<int:user_id>/role")
@@ -151,8 +167,7 @@ def auth_change_role(user_id):
     headers = {
         "Authorization": request.headers.get("Authorization", "")
     }
-    resp = requests.patch(url, headers=headers, json=request.get_json())
-    return (resp.content, resp.status_code, resp.headers.items())
+    return _safe_forward("PATCH", url, headers=headers, json=request.get_json())
 
 
 # -------- LEASE ROUTES (proxy til LeaseService) --------
@@ -160,30 +175,25 @@ def auth_change_role(user_id):
 @app.get("/leases")
 def gw_get_leases():
     url = f"{LEASE_BASE}/leases"
-    resp = requests.get(url, params=request.args)
-    return (resp.content, resp.status_code, resp.headers.items())
+    return _safe_forward("GET", url, params=request.args)
 
 
 @app.get("/leases/<int:lease_id>")
 def gw_get_lease(lease_id):
     url = f"{LEASE_BASE}/leases/{lease_id}"
-    resp = requests.get(url)
-    return (resp.content, resp.status_code, resp.headers.items())
+    return _safe_forward("GET", url)
 
 
 @app.post("/leases")
 def gw_create_lease():
     url = f"{LEASE_BASE}/leases"
-    resp = requests.post(url, json=request.get_json())
-    return (resp.content, resp.status_code, resp.headers.items())
+    return _safe_forward("POST", url, json=request.get_json())
 
 
 @app.patch("/leases/<int:lease_id>/status")
 def gw_change_lease_status(lease_id):
     url = f"{LEASE_BASE}/leases/{lease_id}/status"
-    resp = requests.patch(url, json=request.get_json())
-    return (resp.content, resp.status_code, resp.headers.items())
-
+    return _safe_forward("PATCH", url, json=request.get_json())
 
 
 # -------- DAMAGE ROUTES (proxy til DamageService) --------
@@ -191,30 +201,25 @@ def gw_change_lease_status(lease_id):
 @app.get("/damages")
 def gw_get_damages():
     url = f"{DAMAGE_BASE}/damages"
-    resp = requests.get(url, params=request.args)
-    return (resp.content, resp.status_code, resp.headers.items())
+    return _safe_forward("GET", url, params=request.args)
 
 
 @app.get("/damages/<int:damage_id>")
 def gw_get_damage(damage_id):
     url = f"{DAMAGE_BASE}/damages/{damage_id}"
-    resp = requests.get(url)
-    return (resp.content, resp.status_code, resp.headers.items())
+    return _safe_forward("GET", url)
 
 
 @app.post("/damages")
 def gw_create_damage():
     url = f"{DAMAGE_BASE}/damages"
-    resp = requests.post(url, json=request.get_json())
-    return (resp.content, resp.status_code, resp.headers.items())
+    return _safe_forward("POST", url, json=request.get_json())
 
 
 @app.patch("/damages/<int:damage_id>/status")
 def gw_change_damage_status(damage_id):
     url = f"{DAMAGE_BASE}/damages/{damage_id}/status"
-    resp = requests.patch(url, json=request.get_json())
-    return (resp.content, resp.status_code, resp.headers.items())
-
+    return _safe_forward("PATCH", url, json=request.get_json())
 
 
 # -------- REPORTING ROUTES (proxy til ReportingService) --------
@@ -222,9 +227,15 @@ def gw_change_damage_status(damage_id):
 @app.get("/reporting/kpi/overview")
 def gw_kpi_overview():
     url = f"{REPORT_BASE}/reporting/kpi/overview"
-    resp = requests.get(url)
-    return (resp.content, resp.status_code, resp.headers.items())
+    return _safe_forward("GET", url)
 
+
+# -------- RKI ROUTES (proxy til RKI Service) --------
+
+@app.post("/rki/check")
+def gw_rki_check():
+    url = f"{RKI_BASE}/rki/check"
+    return _safe_forward("POST", url, json=request.get_json())
 
 
 if __name__ == "__main__":

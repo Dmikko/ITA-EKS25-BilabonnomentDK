@@ -15,8 +15,11 @@ services:
     container_name: lease_service
     ports:
       - "5002:5002"
-    volumes:
-      - ./services/lease_service/lease.db:/app/lease.db
+    environment:
+      - RKI_BASE_URL=http://rki_service:5005
+      #- LEASE_DB_PATH=/app/lease.db
+    #volumes:
+    #  - ./services/lease_service/lease.db:/app/lease.db
 
   damage_service:
     build: ./services/damage_service
@@ -35,22 +38,33 @@ services:
       - GATEWAY_BASE_URL=http://gateway:8000
     # vigtigst: INGEN depends_on til gateway, ellers cycle
 
+  rki_service:
+     build: ./services/rki_service
+     container_name: rki_service
+     ports:
+      - "5005:5005"
+
+
   gateway:
     build: ./gateway
     container_name: gateway
     ports:
       - "8000:8000"
     environment:
-      - AUTH_BASE_URL=http://auth_service:5001
-      - LEASE_BASE_URL=http://lease_service:5002
-      - DAMAGE_BASE_URL=http://damage_service:5003
-      - REPORT_BASE_URL=http://reporting_service:5004
+      # Gateway kalder nu hostens porter, som er mapped til containerne
+      - AUTH_BASE_URL=http://host.docker.internal:5001
+      - LEASE_BASE_URL=http://host.docker.internal:5002
+      - DAMAGE_BASE_URL=http://host.docker.internal:5003
+      - REPORT_BASE_URL=http://host.docker.internal:5004
+      - RKI_BASE_URL=http://host.docker.internal:5005
       - AUTH_SECRET=supersecret
     depends_on:
       - auth_service
       - lease_service
       - damage_service
       - reporting_service
+      - rki_service
+
 
   frontend:
     build: ./frontend

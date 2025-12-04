@@ -1,17 +1,32 @@
 import sqlite3
+import os
 from pathlib import Path
 from datetime import datetime
 
-DB_PATH = Path(__file__).parent / "lease.db"
+# Standard: filen hedder lease.db i containerens /app
+DB_PATH = os.getenv("LEASE_DB_PATH", "lease.db")
 
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
+    """
+    Åbn en SQLite forbindelse til lease.db.
+    Sørger for at mappen til filen findes.
+    """
+    db_path = Path(DB_PATH)
+    if db_path.parent != Path("."):
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_db():
+    """
+    Opretter leases-tabellen med det schema vi har aftalt.
+    Hvis en gammel DB eksisterer med forkert struktur, er det lettest
+    at slette lease.db manuelt og lade denne funktion oprette en ny.
+    """
     conn = get_connection()
     cur = conn.cursor()
 
@@ -20,6 +35,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS leases (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             customer_name TEXT NOT NULL,
+            customer_cpr TEXT,
             customer_email TEXT NOT NULL,
             customer_phone TEXT,
             car_model TEXT NOT NULL,
@@ -29,6 +45,9 @@ def init_db():
             end_date TEXT NOT NULL,
             monthly_price REAL NOT NULL,
             status TEXT NOT NULL,
+            rki_status TEXT NOT NULL DEFAULT 'PENDING',
+            rki_score REAL,
+            rki_checked_at TEXT,
             created_by_user_id INTEGER,
             created_at TEXT NOT NULL
         )
@@ -39,7 +58,11 @@ def init_db():
     conn.close()
 
 
-def create_lease(data: dict):
+def create_lease(data: dict) -> int:
+    """
+    Indsætter en ny lejeaftale.
+    RKI-felter starter som PENDING, score = NULL, checked_at = NULL.
+    """
     conn = get_connection()
     cur = conn.cursor()
 
@@ -49,6 +72,7 @@ def create_lease(data: dict):
         """
         INSERT INTO leases (
             customer_name,
+            customer_cpr,
             customer_email,
             customer_phone,
             car_model,
@@ -58,13 +82,17 @@ def create_lease(data: dict):
             end_date,
             monthly_price,
             status,
+            rki_status,
+            rki_score,
+            rki_checked_at,
             created_by_user_id,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             data["customer_name"],
+            data.get("customer_cpr"),
             data["customer_email"],
             data.get("customer_phone"),
             data["car_model"],
@@ -74,6 +102,10 @@ def create_lease(data: dict):
             data["end_date"],
             data["monthly_price"],
             data.get("status", "ACTIVE"),
+            # RKI starter som pending – frontend/gateway skal ikke tænke på det
+            data.get("rki_status", "PENDING"),
+            data.get("rki_score"),       # typisk None ved oprettelse
+            data.get("rki_checked_at"),  # typisk None ved oprettelse
             data.get("created_by_user_id"),
             now,
         ),
@@ -89,7 +121,10 @@ def list_leases(status: str | None = None):
     conn = get_connection()
     cur = conn.cursor()
     if status:
-        cur.execute("SELECT * FROM leases WHERE status = ? ORDER BY id DESC", (status,))
+        cur.execute(
+            "SELECT * FROM leases WHERE status = ? ORDER BY id DESC",
+            (status,),
+        )
     else:
         cur.execute("SELECT * FROM leases ORDER BY id DESC")
     rows = cur.fetchall()
@@ -109,6 +144,31 @@ def get_lease_by_id(lease_id: int):
 def update_lease_status(lease_id: int, new_status: str):
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("UPDATE leases SET status = ? WHERE id = ?", (new_status, lease_id))
+    cur.execute(
+        "UPDATE leases SET status = ? WHERE id = ?",
+        (new_status, lease_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_rki_result(lease_id: int, rki_status: str, rki_score: float | None):
+    """
+    Bruges af main.py efter kald til RKI-service.
+    Opdaterer rki_status, rki_score og timestamp.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    checked_at = datetime.utcnow().isoformat()
+
+    cur.execute(
+        """
+        UPDATE leases
+        SET rki_status = ?, rki_score = ?, rki_checked_at = ?
+        WHERE id = ?
+        """,
+        (rki_status, rki_score, checked_at, lease_id),
+    )
+
     conn.commit()
     conn.close()
