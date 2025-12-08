@@ -12,6 +12,9 @@ from database import (
 
 # RKI-service kører som egen container på docker-netværket
 RKI_BASE_URL = os.getenv("RKI_BASE_URL", "http://rki_service:5005")
+# Fleet-service kører som egen container på docker-netværket
+FLEET_BASE_URL = os.getenv("FLEET_BASE_URL", "http://fleet_service:5006")
+
 
 app = Flask(__name__)
 
@@ -114,6 +117,37 @@ def create_lease_endpoint():
     return jsonify(dict(lease)), 201
 """""
 
+
+def call_fleet_allocate(car_model: str, lease_id: int):
+    """
+    Kalder FleetService for at allokere en AVAILABLE bil af den ønskede model.
+    Returnerer (vehicle_dict, error_dict)
+    - vehicle_dict: dict med bilen, hvis succes
+    - error_dict: dict med fejlbesked, hvis fejl
+    """
+    try:
+        resp = requests.post(
+            f"{FLEET_BASE_URL}/vehicles/allocate",
+            json={"model_name": car_model, "lease_id": lease_id},
+            timeout=5,
+        )
+    except Exception as e:
+        return None, {"error": "fleet_service unavailable", "details": str(e)}
+
+    try:
+        data = resp.json()
+    except Exception:
+        return None, {"error": "Invalid JSON from fleet_service", "status_code": resp.status_code}
+
+    if resp.status_code != 200:
+        # fx 404 = ingen AVAILABLE bil
+        return None, data
+
+    return data, None
+
+
+
+
 @app.post("/leases")
 def create_lease_endpoint():
     data = request.get_json() or {}
@@ -137,7 +171,7 @@ def create_lease_endpoint():
     data["rki_status"] = rki_status
     data["rki_score"] = rki_score
 
-
+    # Opret selve lease i vores egen DB
     try:
         lease_id = create_lease(data)
     except Exception as e:
@@ -145,8 +179,26 @@ def create_lease_endpoint():
 
     lease = get_lease_by_id(lease_id)
     lease_dict = dict(lease)
-    lease_dict["rki_reason"] = rki_reason  # ikke i DB, men retur til frontend
 
+    # ---- FLEET ALLOCATION ----
+    car_model = lease_dict.get("car_model") or data.get("car_model")
+    allocated_vehicle, fleet_error = (None, None)
+
+    if car_model:
+        allocated_vehicle, fleet_error = call_fleet_allocate(car_model=car_model, lease_id=lease_id)
+
+    # Byg svar til frontend
+    lease_dict["rki_reason"] = rki_reason  # ikke i DB, men retur til frontend
+    lease_dict["fleet_vehicle"] = allocated_vehicle
+    lease_dict["fleet_error"] = fleet_error
+
+    # På dette trin har vi endnu IKKE gemt vehicle_id i lease-db'en.
+    # Når vi har udvidet leases-tabellen med vehicle_id, kan vi:
+    #  - gemme allocated_vehicle["id"] i leases
+    #  - bruge det ved afslutning af lease til at sætte bilen AVAILABLE igen.
+
+    # Statuskode: 201 = lease oprettet
+    # Frontend kan se på fleet_error om bilen faktisk blev allokeret.
     return jsonify(lease_dict), 201
 
 

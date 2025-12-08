@@ -11,6 +11,7 @@ AUTH_BASE = os.getenv("AUTH_BASE_URL", "http://localhost:5001")
 LEASE_BASE = os.getenv("LEASE_BASE_URL", "http://localhost:5002")
 DAMAGE_BASE = os.getenv("DAMAGE_BASE_URL", "http://localhost:5003")
 REPORT_BASE = os.getenv("REPORT_BASE_URL", "http://localhost:5004")
+FLEET_BASE = os.getenv("FLEET_BASE_URL", "http://localhost:5006")
 #RKI_BASE = os.getenv("RKI_BASE_URL", "http://localhost:5005")
 RKI_BASE_URL = os.getenv("RKI_BASE_URL", "http://rki_service:5005")
 
@@ -25,6 +26,17 @@ ROUTE_PERMISSIONS = {
     ("GET", "/leases/"): ["DATAREG", "SKADE", "FORRET", "LEDELSE", "ADMIN"],   # /leases/<id>, /leases/<id>/status
     ("POST", "/leases"): ["DATAREG", "LEDELSE", "ADMIN"],
     ("PATCH", "/leases/"): ["DATAREG", "LEDELSE", "ADMIN"],
+
+     # ----- FLEET -----
+    # Liste og se biler
+    ("GET", "/fleet/vehicles"): ["DATAREG", "SKADE", "FORRET", "LEDELSE", "ADMIN"],
+    ("GET", "/fleet/vehicles/"): ["DATAREG", "SKADE", "FORRET", "LEDELSE", "ADMIN"],  # /fleet/vehicles/<id>
+    
+    # Allocate bil til lease
+    ("POST", "/fleet/vehicles/allocate"): ["DATAREG", "LEDELSE", "ADMIN"],
+
+     # Opdatere status (fx DAMAGED, REPAIR, AVAILABLE)
+    ("PUT", "/fleet/vehicles/"): ["DATAREG", "SKADE", "LEDELSE", "ADMIN"],  # /fleet/vehicles/<id>/status
 
     # ----- DAMAGES -----
     ("GET", "/damages"): ["SKADE", "FORRET", "LEDELSE", "ADMIN"],
@@ -221,6 +233,52 @@ def gw_create_damage():
 def gw_change_damage_status(damage_id):
     url = f"{DAMAGE_BASE}/damages/{damage_id}/status"
     return _safe_forward("PATCH", url, json=request.get_json())
+
+
+
+# -------- FLEET ROUTES (proxy til FleetService) --------
+
+@app.get("/fleet/vehicles")
+def gw_get_vehicles():
+    """
+    GET /fleet/vehicles
+    GET /fleet/vehicles?status=AVAILABLE
+    """
+    url = f"{FLEET_BASE}/vehicles"
+    return _safe_forward("GET", url, params=request.args)
+
+
+@app.get("/fleet/vehicles/<int:vehicle_id>")
+def gw_get_vehicle(vehicle_id):
+    """
+    GET /fleet/vehicles/<id>
+    """
+    url = f"{FLEET_BASE}/vehicles/{vehicle_id}"
+    return _safe_forward("GET", url)
+
+
+@app.post("/fleet/vehicles/allocate")
+def gw_allocate_vehicle():
+    """
+    POST /fleet/vehicles/allocate
+    Body: { "model_name": "...", "lease_id": 123 }
+
+    Bruges af lease_service (via gateway) til at finde og reservere en AVAILABLE bil.
+    """
+    url = f"{FLEET_BASE}/vehicles/allocate"
+    return _safe_forward("POST", url, json=request.get_json())
+
+
+@app.put("/fleet/vehicles/<int:vehicle_id>/status")
+def gw_update_vehicle_status(vehicle_id):
+    """
+    PUT /fleet/vehicles/<id>/status
+    Body: { "status": "LEASED|AVAILABLE|DAMAGED|REPAIR", "lease_id": 123 (optional) }
+
+    Bruges af lease_service og damage_service til at opdatere bilens status.
+    """
+    url = f"{FLEET_BASE}/vehicles/{vehicle_id}/status"
+    return _safe_forward("PUT", url, json=request.get_json())
 
 
 # -------- REPORTING ROUTES (proxy til ReportingService) --------
