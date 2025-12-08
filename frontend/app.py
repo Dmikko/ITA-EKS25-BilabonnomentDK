@@ -199,18 +199,23 @@ def page_leases():
                             "PENDING": "#f5c54222",
                             "SKIPPED": "#88888822",
                         }.get(status, "#88888822")
+                        
 
-                        st.markdown(
-                            f"""
-                            <div style='padding:14px; margin-top:12px; border-radius:10px;
-                                 background:{box_color};'>
-                                <b>RKI Status:</b> {status}<br>
-                                <b>Score:</b> {l.get("rki_score","—")}<br>
-                                <b>Tjekket:</b> {l.get("rki_checked_at","—")}
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
+                        
+
+                        #Tidligere version af RKI check med markdown boks
+
+                        #st.markdown(
+                        #    f"""
+                        #    <div style='padding:14px; margin-top:12px; border-radius:10px;
+                        #         background:{box_color};'>
+                        #        <b>RKI Status:</b> {status}<br>
+                        #        <b>Score:</b> {l.get("rki_score","—")}<br>
+                        #        <b>Tjekket:</b> {l.get("rki_checked_at","—")}
+                        #    </div>
+                        #    """,
+                        #    unsafe_allow_html=True,
+                        #)
 
     # ---------- OPRET NY AFTALE ----------
     with tab_create:

@@ -5,7 +5,7 @@ from datetime import datetime
 
 # Standard: filen hedder lease.db i containerens /app
 DB_PATH = os.getenv("LEASE_DB_PATH", "lease.db")
-
+print(f"LEASE_DB_PATH={DB_PATH}")
 
 def get_connection():
     """
