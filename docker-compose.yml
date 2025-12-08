@@ -17,9 +17,9 @@ services:
       - "5002:5002"
     environment:
       - RKI_BASE_URL=http://rki_service:5005
-      #- LEASE_DB_PATH=/app/lease.db
-    #volumes:
-    #  - ./services/lease_service/lease.db:/app/lease.db
+      - LEASE_DB_PATH=/app/lease.db
+    volumes:
+      - ./services/lease_service/lease.db:/app/lease.db
 
   damage_service:
     build: ./services/damage_service
