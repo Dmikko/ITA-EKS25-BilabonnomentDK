@@ -1,3 +1,5 @@
+import os
+import requests
 from flask import Flask, request, jsonify
 from database import (
     init_db,
@@ -8,6 +10,33 @@ from database import (
 )
 
 app = Flask(__name__)
+
+# Fleet-service base URL (overstyres i Docker via FLEET_BASE_URL)
+FLEET_BASE_URL = os.getenv("FLEET_BASE_URL", "http://localhost:5006")
+
+def call_fleet_update_status(vehicle_id: int, status: str, lease_id: int | None = None):
+    """
+    Kalder FleetService for at opdatere status på en bil.
+    Bruges når en skade registreres, så bilen sættes til fx DAMAGED.
+    Returnerer (ok: bool, error_dict | None)
+    """
+    try:
+        resp = requests.put(
+            f"{FLEET_BASE_URL}/vehicles/{vehicle_id}/status",
+            json={"status": status, "lease_id": lease_id},
+            timeout=5,
+        )
+    except Exception as e:
+        return False, {"error": "fleet_service unavailable", "details": str(e)}
+
+    if resp.status_code not in (200, 204):
+        try:
+            return False, resp.json()
+        except Exception:
+            return False, {"error": f"Invalid response from fleet_service (status {resp.status_code})"}
+
+    return True, None
+
 
 
 @app.before_request
@@ -54,24 +83,52 @@ def create_damage_endpoint():
     if missing:
         return jsonify({"error": f"Missing fields: {', '.join(missing)}"}), 400
 
+    # lease_id som int
     try:
         lease_id = int(data["lease_id"])
         data["lease_id"] = lease_id
     except (ValueError, TypeError):
         return jsonify({"error": "lease_id must be an integer"}), 400
 
+    # estimated_cost som float
     try:
         data["estimated_cost"] = float(data["estimated_cost"])
     except (ValueError, TypeError):
         return jsonify({"error": "estimated_cost must be a number"}), 400
+
+    # vehicle_id er valgfri, men hvis den er sat, bruger vi den til Fleet
+    vehicle_id = data.get("vehicle_id")
+    if vehicle_id is not None:
+        try:
+            vehicle_id = int(vehicle_id)
+            data["vehicle_id"] = vehicle_id
+        except (ValueError, TypeError):
+            return jsonify({"error": "vehicle_id must be an integer if provided"}), 400
 
     try:
         damage_id = create_damage(data)
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
+    fleet_result = None
+    # Hvis vi kender bilen, så sæt den til DAMAGED i flåden
+    if vehicle_id is not None:
+        ok, fleet_err = call_fleet_update_status(
+            vehicle_id=vehicle_id,
+            status="DAMAGED",
+            lease_id=lease_id,
+        )
+        fleet_result = {
+            "ok": ok,
+            "error": fleet_err,
+        }
+
     row = get_damage_by_id(damage_id)
-    return jsonify(dict(row)), 201
+    damage_dict = dict(row)
+    if fleet_result is not None:
+        damage_dict["fleet_update"] = fleet_result
+
+    return jsonify(damage_dict), 201
 
 
 @app.patch("/damages/<int:damage_id>/status")

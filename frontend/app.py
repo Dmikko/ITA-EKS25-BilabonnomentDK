@@ -123,6 +123,48 @@ def page_dashboard():
         st.write(f"{row['car_model']}: {row['count']} aftaler")
 
 
+
+def page_fleet():
+    st.header("Flådeoverblik")
+
+    role = st.session_state.role
+    if role not in ["DATAREG", "SKADE", "FORRET", "LEDELSE", "ADMIN"]:
+        st.info("Du har ikke adgang til flådedata.")
+        return
+
+    status_filter = st.selectbox(
+        "Status-filter",
+        ["(alle)", "AVAILABLE", "LEASED", "DAMAGED", "REPAIR"],
+        index=0,
+    )
+
+    params = {}
+    if status_filter != "(alle)":
+        params["status"] = status_filter
+
+    resp = api_get("/fleet/vehicles", params=params, token=st.session_state.token)
+    if resp.status_code != 200:
+        st.error(f"Kunne ikke hente flådedata: {resp.text}")
+        return
+
+    vehicles = resp.json()
+    if not vehicles:
+        st.info("Ingen biler fundet.")
+        return
+
+    for v in vehicles:
+        title = f"Bil #{v['id']} – {v.get('model_name', '—')} – {v.get('status', '—')}"
+        with st.expander(title):
+            st.markdown(f"**Model:** {v.get('model_name', '—')}")
+            st.markdown(f"**Brændstof:** {v.get('fuel_type', '—')}")
+            st.markdown(f"**Pris pr. måned:** {v.get('monthly_price', '—')} kr.")
+            st.markdown(f"**Status:** {v.get('status', '—')}")
+            st.markdown(f"**Aktiv lease ID:** {v.get('current_lease_id', '—')}")
+            st.markdown(f"**Afhentningssted:** {v.get('delivery_location', '—')}")
+            st.markdown(f"**Senest opdateret:** {v.get('updated_at', '—')}")
+
+
+
 def page_leases():
     st.header("Lejeaftaler")
 
@@ -176,6 +218,34 @@ def page_leases():
                         )
                         st.markdown("---")
 
+                                                # --- Flådeinfo / vehicle_id ---
+                        vehicle_id = l.get("vehicle_id")
+
+                        if vehicle_id is not None:
+                            st.markdown(f"**Tilordnet bil (vehicle_id):** {vehicle_id}")
+
+                            fleet_resp = api_get(
+                                f"/fleet/vehicles/{vehicle_id}",
+                                token=st.session_state.token,
+                            )
+                            if fleet_resp.status_code == 200:
+                                v = fleet_resp.json()
+                                st.markdown("**Flådeinfo:**")
+                                st.write(
+                                    f"Status: {v.get('status', '—')} | "
+                                    f"Model: {v.get('model_name', '—')} | "
+                                    f"Brændstof: {v.get('fuel_type', '—')} | "
+                                    f"Pris pr. måned: {v.get('monthly_price', '—')} | "
+                                    f"Afhentning: {v.get('delivery_location', '—')}"
+                                )
+                            else:
+                                st.write("Kunne ikke hente flådeinfo for bilen.")
+                        else:
+                            st.markdown("**Tilordnet bil (vehicle_id):** —")
+
+                        st.markdown("---")
+
+
                         # --- RKI Section ---
                         st.markdown("### RKI-vurdering")
 
@@ -228,32 +298,81 @@ def page_leases():
             customer_email = st.text_input("Kunde-email")
             customer_phone = st.text_input("Kundens telefon")
             customer_cpr = st.text_input("Kundens CPR-nummer")
-            car_model = st.text_input("Bilmodel")
+
+            # --- Bilvalg baseret på tilgængelige biler i flåden ---
+            selected_model = None
+            available_models_options = ["(ingen tilgængelige data)", "Anden model (manuel indtastning)"]
+
+            try:
+                fleet_resp = api_get(
+                    "/fleet/vehicles",
+                    params={"status": "AVAILABLE"},
+                    token=st.session_state.token,
+                )
+                if fleet_resp.status_code == 200:
+                    vehicles = fleet_resp.json()
+                    model_counts = {}
+                    for v in vehicles:
+                        m = v.get("model_name")
+                        if not m:
+                            continue
+                        model_counts[m] = model_counts.get(m, 0) + 1
+
+                    if model_counts:
+                        available_models_options = [
+                            f"{m} ({count} tilgængelig)"
+                            for m, count in sorted(model_counts.items())
+                        ]
+                        available_models_options.append("Anden model (manuel indtastning)")
+            except Exception as e:
+                st.info(f"Kunne ikke hente tilgængelige biler fra flåden: {e}")
+
+            chosen_model_label = st.selectbox(
+                "Bilmodel (fra flåden)",
+                options=available_models_options,
+            )
+
+            if chosen_model_label and chosen_model_label != "(ingen tilgængelige data)" and not chosen_model_label.startswith("Anden model"):
+                # label er fx "Peugeot 208 (3 tilgængelig)" → vi splitter på " ("
+                selected_model = chosen_model_label.split(" (", 1)[0]
+
+            # Manuel override / fallback
+            car_model_manual = st.text_input("Bilmodel (manuel, hvis nødvendig)")
+
             car_segment = st.text_input("Bilsegment (valgfrit)")
             car_registration = st.text_input("Registreringsnummer (valgfrit)")
             start_date = st.date_input("Startdato")
             end_date = st.date_input("Slutdato")
             monthly_price = st.number_input("Månedlig pris", min_value=0.0, step=500.0)
 
+
             if st.button("Gem aftale"):
-                payload = {
-                    "customer_name": customer_name,
-                    "customer_email": customer_email,
-                    "customer_phone": customer_phone,
-                    "customer_cpr": customer_cpr,
-                    "car_model": car_model,
-                    "car_segment": car_segment or None,
-                    "car_registration": car_registration or None,
-                    "start_date": start_date.isoformat(),
-                    "end_date": end_date.isoformat(),
-                    "monthly_price": monthly_price,
-                }
-                resp = api_post("/leases", json=payload, token=st.session_state.token)
-                if resp.status_code == 201:
-                    st.success("Aftale oprettet")
-                    st.rerun()
+                # Vælg model i prioriteret rækkefølge:
+                # 1) valgt fra flåden, 2) manuel indtastning
+                car_model_final = selected_model or (car_model_manual.strip() or None)
+
+                if not car_model_final:
+                    st.error("Du skal vælge eller indtaste en bilmodel.")
                 else:
-                    st.error(f"Fejl ved oprettelse: {resp.text}")
+                    payload = {
+                        "customer_name": customer_name,
+                        "customer_email": customer_email,
+                        "customer_phone": customer_phone,
+                        "customer_cpr": customer_cpr,
+                        "car_model": car_model_final,
+                        "car_segment": car_segment or None,
+                        "car_registration": car_registration or None,
+                        "start_date": start_date.isoformat(),
+                        "end_date": end_date.isoformat(),
+                        "monthly_price": monthly_price,
+                    }
+                    resp = api_post("/leases", json=payload, token=st.session_state.token)
+                    if resp.status_code == 201:
+                        st.success("Aftale oprettet")
+                        st.rerun()
+                    else:
+                        st.error(f"Fejl ved oprettelse: {resp.text}")
+
 
 
 
@@ -284,23 +403,71 @@ def page_damages():
         if role not in ["SKADE", "LEDELSE", "ADMIN"]:
             st.info("Kun skade-rolle/ledelse/admin kan registrere skader.")
         else:
-            lease_id = st.number_input("Lease ID", min_value=1, step=1)
+            st.subheader("Registrer skade")
+
+            # Forsøg at hente aktive lejeaftaler til dropdown
+            leases_options = []
+            leases_map = {}
+
+            try:
+                leases_resp = api_get("/leases", params={"status": "ACTIVE"}, token=st.session_state.token)
+                if leases_resp.status_code == 200:
+                    leases_data = leases_resp.json()
+                    for l in leases_data:
+                        label = (
+                            f"Lease #{l['id']} – {l.get('customer_name','?')} – "
+                            f"{l.get('car_model','?')} "
+                            f"(vehicle_id={l.get('vehicle_id','-')})"
+                        )
+                        leases_options.append(label)
+                        leases_map[label] = {
+                            "lease_id": l["id"],
+                            "vehicle_id": l.get("vehicle_id"),
+                        }
+            except Exception as e:
+                st.warning(f"Kunne ikke hente aktive lejeaftaler: {e}")
+
+            use_manual = False
+
+            if leases_options:
+                selected_label = st.selectbox(
+                    "Vælg aktiv lejeaftale",
+                    options=leases_options,
+                )
+                selected = leases_map[selected_label]
+                lease_id = selected["lease_id"]
+                vehicle_id = selected["vehicle_id"]
+                st.write(f"Valgt lease ID: {lease_id}, vehicle_id: {vehicle_id}")
+            else:
+                st.info("Ingen aktive lejeaftaler fundet – indtast lease ID manuelt.")
+                use_manual = True
+                lease_id = st.number_input("Lease ID", min_value=1, step=1)
+                vehicle_id = st.number_input("Vehicle ID (valgfri)", min_value=0, step=1)
+
             category = st.selectbox("Kategori", ["kosmetisk", "mellem", "alvorlig"])
             description = st.text_area("Beskrivelse")
             estimated_cost = st.number_input("Estimeret omkostning", min_value=0.0, step=500.0)
 
             if st.button("Gem skade"):
-                payload = {
-                    "lease_id": int(lease_id),
-                    "category": category,
-                    "description": description,
-                    "estimated_cost": estimated_cost,
-                }
-                resp = api_post("/damages", json=payload, token=st.session_state.token)
-                if resp.status_code == 201:
-                    st.success("Skade registreret")
+                if use_manual and not lease_id:
+                    st.error("Lease ID skal udfyldes.")
                 else:
-                    st.error(f"Fejl ved oprettelse: {resp.text}")
+                    payload = {
+                        "lease_id": int(lease_id),
+                        "category": category,
+                        "description": description,
+                        "estimated_cost": estimated_cost,
+                    }
+                    # kun send vehicle_id hvis det er sat/gyldigt
+                    if vehicle_id and int(vehicle_id) > 0:
+                        payload["vehicle_id"] = int(vehicle_id)
+
+                    resp = api_post("/damages", json=payload, token=st.session_state.token)
+                    if resp.status_code == 201:
+                        st.success("Skade registreret")
+                    else:
+                        st.error(f"Fejl ved oprettelse: {resp.text}")
+
 
 
 def page_admin():
@@ -382,6 +549,12 @@ def render_sidebar():
                 "Lejeaftaler": "🚗 Lejeaftaler",
                 "Skader": "🛠️ Skader",
             }
+
+             # Flåde-menu til relevante roller
+            if role in ("DATAREG", "SKADE", "FORRET", "LEDELSE", "ADMIN"):
+                menu_options["Flåde"] = "🚘 Flåde"
+
+
             if role in ("ADMIN", "LEDELSE"):
                 menu_options["Admin"] = "👤 Admin"
 
@@ -451,6 +624,8 @@ def main():
 
         if page == "Dashboard":
             page_dashboard()
+        elif page == "Flåde":
+            page_fleet()
         elif page == "Lejeaftaler":
             page_leases()
         elif page == "Skader":

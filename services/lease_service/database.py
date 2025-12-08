@@ -45,11 +45,13 @@ def init_db():
             end_date TEXT NOT NULL,
             monthly_price REAL NOT NULL,
             status TEXT NOT NULL,
+            vehicle_id INTEGER,                 -- NY: reference til fleet.vehicles.id
             rki_status TEXT NOT NULL DEFAULT 'PENDING',
             rki_score REAL,
             rki_checked_at TEXT,
             created_by_user_id INTEGER,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL            -- NY: til status/ændringer
         )
         """
     )
@@ -62,6 +64,7 @@ def create_lease(data: dict) -> int:
     """
     Indsætter en ny lejeaftale.
     RKI-felter starter som PENDING, score = NULL, checked_at = NULL.
+    vehicle_id sættes typisk først senere, når Fleet har allokeret en bil.
     """
     conn = get_connection()
     cur = conn.cursor()
@@ -82,13 +85,15 @@ def create_lease(data: dict) -> int:
             end_date,
             monthly_price,
             status,
+            vehicle_id,
             rki_status,
             rki_score,
             rki_checked_at,
             created_by_user_id,
-            created_at
+            created_at,
+            updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             data["customer_name"],
@@ -102,11 +107,12 @@ def create_lease(data: dict) -> int:
             data["end_date"],
             data["monthly_price"],
             data.get("status", "ACTIVE"),
-            # RKI starter som pending – frontend/gateway skal ikke tænke på det
+            data.get("vehicle_id"),            # typisk None ved oprettelse
             data.get("rki_status", "PENDING"),
-            data.get("rki_score"),       # typisk None ved oprettelse
-            data.get("rki_checked_at"),  # typisk None ved oprettelse
+            data.get("rki_score"),             # typisk None ved oprettelse
+            data.get("rki_checked_at"),        # typisk None ved oprettelse
             data.get("created_by_user_id"),
+            now,
             now,
         ),
     )
@@ -144,9 +150,10 @@ def get_lease_by_id(lease_id: int):
 def update_lease_status(lease_id: int, new_status: str):
     conn = get_connection()
     cur = conn.cursor()
+    now = datetime.utcnow().isoformat()
     cur.execute(
-        "UPDATE leases SET status = ? WHERE id = ?",
-        (new_status, lease_id),
+        "UPDATE leases SET status = ?, updated_at = ? WHERE id = ?",
+        (new_status, now, lease_id),
     )
     conn.commit()
     conn.close()
@@ -164,11 +171,31 @@ def update_rki_result(lease_id: int, rki_status: str, rki_score: float | None):
     cur.execute(
         """
         UPDATE leases
-        SET rki_status = ?, rki_score = ?, rki_checked_at = ?
+        SET rki_status = ?, rki_score = ?, rki_checked_at = ?, updated_at = ?
         WHERE id = ?
         """,
-        (rki_status, rki_score, checked_at, lease_id),
+        (rki_status, rki_score, checked_at, checked_at, lease_id),
     )
 
+    conn.commit()
+    conn.close()
+
+
+def update_lease_vehicle(lease_id: int, vehicle_id: int):
+    """
+    Bruges efter succesfuld allokering i FleetService.
+    Binder lease til en konkret bil.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    cur.execute(
+        """
+        UPDATE leases
+        SET vehicle_id = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (vehicle_id, now, lease_id),
+    )
     conn.commit()
     conn.close()
