@@ -14,6 +14,8 @@ REPORT_BASE = os.getenv("REPORT_BASE_URL", "http://localhost:5004")
 FLEET_BASE = os.getenv("FLEET_BASE_URL", "http://localhost:5006")
 #RKI_BASE = os.getenv("RKI_BASE_URL", "http://localhost:5005")
 RKI_BASE_URL = os.getenv("RKI_BASE_URL", "http://rki_service:5005")
+RESERVATION_BASE = os.getenv("RESERVATION_BASE_URL", "http://localhost:5007")
+
 
 # SKAL matche SECRET i AuthService
 AUTH_SECRET = os.getenv("AUTH_SECRET", "supersecret")
@@ -25,7 +27,8 @@ ROUTE_PERMISSIONS = {
     ("GET", "/leases"): ["DATAREG", "SKADE", "FORRET", "LEDELSE", "ADMIN"],
     ("GET", "/leases/"): ["DATAREG", "SKADE", "FORRET", "LEDELSE", "ADMIN"],   # /leases/<id>, /leases/<id>/status
     ("POST", "/leases"): ["DATAREG", "LEDELSE", "ADMIN"],
-    ("PATCH", "/leases/"): ["DATAREG", "LEDELSE", "ADMIN"],
+    ("PATCH", "/leases/"): ["DATAREG", "SKADE", "LEDELSE", "ADMIN"],
+
 
      # ----- FLEET -----
     # Liste og se biler
@@ -50,6 +53,13 @@ ROUTE_PERMISSIONS = {
 
     # ----- RKI -----
     ("POST", "/rki/check"): ["DATAREG", "FORRET", "LEDELSE", "ADMIN"],
+
+    # ----- RESERVATIONS -----
+    ("GET", "/reservations"): ["DATAREG", "FORRET", "LEDELSE", "ADMIN"],
+    ("POST", "/reservations"): ["DATAREG", "FORRET", "LEDELSE", "ADMIN"],
+    ("PATCH", "/reservations/"): ["DATAREG", "FORRET", "LEDELSE", "ADMIN"],
+
+
 }
 
 
@@ -208,6 +218,12 @@ def gw_change_lease_status(lease_id):
     url = f"{LEASE_BASE}/leases/{lease_id}/status"
     return _safe_forward("PATCH", url, json=request.get_json())
 
+@app.patch("/leases/<int:lease_id>/end")
+def gw_end_lease(lease_id):
+    url = f"{LEASE_BASE}/leases/{lease_id}/end"
+    return _safe_forward("PATCH", url, json=request.get_json())
+
+
 
 # -------- DAMAGE ROUTES (proxy til DamageService) --------
 
@@ -295,6 +311,30 @@ def gw_kpi_overview():
 def gw_rki_check():
     url = f"{RKI_BASE_URL}/rki/check"
     return _safe_forward("POST", url, json=request.get_json())
+
+
+
+
+# -------- RESERVATION ROUTES --------
+@app.get("/reservations")
+def gw_get_reservations():
+    url = f"{RESERVATION_BASE}/reservations"
+    return _safe_forward("GET", url, params=request.args)
+
+@app.post("/reservations")
+def gw_create_reservation():
+    url = f"{RESERVATION_BASE}/reservations"
+    return _safe_forward("POST", url, json=request.get_json())
+
+@app.patch("/reservations/<int:reservation_id>/status")
+def gw_change_reservation_status(reservation_id):
+    url = f"{RESERVATION_BASE}/reservations/{reservation_id}/status"
+    return _safe_forward("PATCH", url, json=request.get_json())
+
+
+
+
+
 
 
 if __name__ == "__main__":

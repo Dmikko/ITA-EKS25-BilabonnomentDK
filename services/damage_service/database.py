@@ -20,7 +20,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS damages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             lease_id INTEGER NOT NULL,
-            vehicle_id INTEGER,            -- NY: tilknyttet bil fra flåden
+            vehicle_id INTEGER,
             category TEXT NOT NULL,
             description TEXT NOT NULL,
             estimated_cost REAL NOT NULL,
@@ -57,43 +57,7 @@ def create_damage(data: dict):
         """,
         (
             data["lease_id"],
-            data.get("vehicle_id"),         # NY: kan være None
-            data["category"],
-            data["description"],
-            data["estimated_cost"],
-            data.get("detected_at", now),
-            data.get("status", "OPEN"),
-            data.get("created_by_user_id"),
-        ),
-    )
-
-    damage_id = cur.lastrowid
-    conn.commit()
-    conn.close()
-    return damage_id
-
-
-def create_damage(data: dict):
-    conn = get_connection()
-    cur = conn.cursor()
-
-    now = datetime.utcnow().isoformat()
-
-    cur.execute(
-        """
-        INSERT INTO damages (
-            lease_id,
-            category,
-            description,
-            estimated_cost,
-            detected_at,
-            status,
-            created_by_user_id
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            data["lease_id"],
+            data.get("vehicle_id"),
             data["category"],
             data["description"],
             data["estimated_cost"],

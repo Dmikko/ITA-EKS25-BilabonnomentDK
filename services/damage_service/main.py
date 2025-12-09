@@ -96,35 +96,45 @@ def create_damage_endpoint():
     except (ValueError, TypeError):
         return jsonify({"error": "estimated_cost must be a number"}), 400
 
-    # vehicle_id er valgfri, men hvis den er sat, bruger vi den til Fleet
-    vehicle_id = data.get("vehicle_id")
-    if vehicle_id is not None:
-        try:
-            vehicle_id = int(vehicle_id)
-            data["vehicle_id"] = vehicle_id
-        except (ValueError, TypeError):
-            return jsonify({"error": "vehicle_id must be an integer if provided"}), 400
+    # ----------------------------------------------------
+    # 🚀 AUTOMATISK VEHICLE LOOKUP FRA LEASE SERVICE
+    # ----------------------------------------------------
+    VEHICLE_LOOKUP_URL = os.getenv("LEASE_BASE_URL", "http://lease_service:5002")
 
+    vehicle_id = None
+    try:
+        lease_resp = requests.get(f"{VEHICLE_LOOKUP_URL}/leases/{lease_id}", timeout=5)
+        if lease_resp.status_code == 200:
+            lease_data = lease_resp.json()
+            vehicle_id = lease_data.get("vehicle_id")
+    except Exception as e:
+        print(f"[damage_service] vehicle lookup failed: {e}")
+
+    data["vehicle_id"] = vehicle_id
+
+    # ----------------------------------------------------
+    # Gem skade
+    # ----------------------------------------------------
     try:
         damage_id = create_damage(data)
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
+    # ----------------------------------------------------
+    # Hvis vehicle_id kendt → Marker bil som DAMAGED i Fleet
+    # ----------------------------------------------------
     fleet_result = None
-    # Hvis vi kender bilen, så sæt den til DAMAGED i flåden
     if vehicle_id is not None:
         ok, fleet_err = call_fleet_update_status(
             vehicle_id=vehicle_id,
             status="DAMAGED",
             lease_id=lease_id,
         )
-        fleet_result = {
-            "ok": ok,
-            "error": fleet_err,
-        }
+        fleet_result = {"ok": ok, "error": fleet_err}
 
     row = get_damage_by_id(damage_id)
     damage_dict = dict(row)
+
     if fleet_result is not None:
         damage_dict["fleet_update"] = fleet_result
 

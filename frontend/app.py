@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import os
+from datetime import date, datetime, time
 
 
 # ---- UI helpers ----
@@ -86,6 +87,27 @@ def init_session_state():
         st.session_state.role = None
     if "page" not in st.session_state:
         st.session_state.page = "Dashboard"
+
+
+def add_months(start_date: date, months: int) -> date:
+    """
+    Lægger et antal måneder til en date uden at bruge eksterne libs.
+    Bevarer dag i måneden så godt som muligt.
+    """
+    month = start_date.month - 1 + months
+    year = start_date.year + month // 12
+    month = month % 12 + 1
+
+    # find sidste gyldige dag i mål-måneden
+    # (håndterer 28–31 dage)
+    from calendar import monthrange
+    last_day = monthrange(year, month)[1]
+    day = min(start_date.day, last_day)
+
+    return date(year, month, day)
+
+
+
 
 
 # ---- Sidefunktioner ----
@@ -213,9 +235,6 @@ def page_leases():
                         st.markdown(
                             f"**Periode:** {l['start_date']} → {l['end_date']}"
                         )
-                        st.markdown(
-                            f"**Pris:** {l['monthly_price']} kr./md"
-                        )
                         st.markdown("---")
 
                                                 # --- Flådeinfo / vehicle_id ---
@@ -271,7 +290,27 @@ def page_leases():
                         }.get(status, "#88888822")
                         
 
-                        
+                        st.markdown("---")
+                        st.markdown("### Afslut lejeaftale")
+
+                        lease_status = l.get("status", "")
+                        st.write(f"Nuværende status: **{lease_status}**")
+
+                        if lease_status == "ACTIVE":
+                            if st.button("Afslut aftale", key=f"end_lease_{l['id']}"):
+                                resp_end = api_patch(
+                                    f"/leases/{l['id']}/end",
+                                    json={},
+                                    token=st.session_state.token,
+                                )
+                                if resp_end.status_code == 200:
+                                    st.success("Lejeaftalen er afsluttet")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Fejl ved afslutning: {resp_end.text}")
+                        else:
+                            st.info("Aftalen kan kun afsluttes, når den er ACTIVE.")
+
 
                         #Tidligere version af RKI check med markdown boks
 
@@ -342,8 +381,15 @@ def page_leases():
             car_segment = st.text_input("Bilsegment (valgfrit)")
             car_registration = st.text_input("Registreringsnummer (valgfrit)")
             start_date = st.date_input("Startdato")
-            end_date = st.date_input("Slutdato")
-            monthly_price = st.number_input("Månedlig pris", min_value=0.0, step=500.0)
+
+            lease_months = st.selectbox(
+                "Lejeperiode (måneder)",
+                options=[12, 24, 36],
+                index=0,
+            )
+
+        
+
 
 
             if st.button("Gem aftale"):
@@ -354,6 +400,9 @@ def page_leases():
                 if not car_model_final:
                     st.error("Du skal vælge eller indtaste en bilmodel.")
                 else:
+                    # Beregn slutdato ud fra startdato + antal måneder
+                    end_date = add_months(start_date, lease_months)
+
                     payload = {
                         "customer_name": customer_name,
                         "customer_email": customer_email,
@@ -364,7 +413,7 @@ def page_leases():
                         "car_registration": car_registration or None,
                         "start_date": start_date.isoformat(),
                         "end_date": end_date.isoformat(),
-                        "monthly_price": monthly_price,
+                        
                     }
                     resp = api_post("/leases", json=payload, token=st.session_state.token)
                     if resp.status_code == 201:
@@ -374,6 +423,152 @@ def page_leases():
                         st.error(f"Fejl ved oprettelse: {resp.text}")
 
 
+def page_reservations():
+    st.header("Afhentning af biler")
+
+    role = st.session_state.role
+    if role not in ["DATAREG", "FORRET", "LEDELSE", "ADMIN"]:
+        st.info("Du har ikke adgang til afhentninger.")
+        return
+
+    tab_list, tab_create = st.tabs(["Dagens / kommende afhentninger", "Opret afhentning"])
+
+    # ---------- OVERSIGT ----------
+    with tab_list:
+        st.subheader("Afhentninger")
+
+        status_filter = st.selectbox(
+            "Statusfilter",
+            ["Alle", "PENDING", "READY", "PICKED_UP", "CANCELLED"],
+            index=0,
+        )
+
+        params = {}
+        if status_filter != "Alle":
+            params["status"] = status_filter
+
+        resp = api_get("/reservations", params=params, token=st.session_state.token)
+        if resp.status_code != 200:
+            st.error(f"Kunne ikke hente afhentninger: {resp.text}")
+        else:
+            reservations = resp.json()
+            if not reservations:
+                st.info("Ingen afhentninger fundet.")
+            else:
+                today_str = date.today().isoformat()
+
+                for r in reservations:
+                    pickup_date = r.get("pickup_date", "")
+                    lease_id = r.get("lease_id")
+                    status = r.get("status", "")
+                    location = r.get("pickup_location", "")
+
+                    label = f"Reservation #{r['id']} – Lease {lease_id} – {pickup_date} – {status}"
+                    if pickup_date.startswith(today_str):
+                        label = f"[I DAG] {label}"
+
+                    with st.expander(label):
+                        st.markdown(f"**Lease ID:** {lease_id}")
+                        st.markdown(f"**Afhentningsdato:** {pickup_date}")
+                        st.markdown(f"**Lokation:** {location}")
+                        st.markdown(f"**Status:** {status}")
+
+                        actual_pickup_at = r.get("actual_pickup_at")
+                        if actual_pickup_at:
+                            st.markdown(f"**Faktisk afhentet:** {actual_pickup_at}")
+
+                        st.markdown("---")
+                        st.markdown("**Opdater status**")
+
+                        possible_statuses = ["PENDING", "READY", "PICKED_UP", "CANCELLED"]
+                        try:
+                            current_index = possible_statuses.index(status)
+                        except ValueError:
+                            current_index = 0
+
+                        new_status = st.selectbox(
+                            "Ny status",
+                            possible_statuses,
+                            index=current_index,
+                            key=f"reservation_status_{r['id']}",
+                        )
+
+                        if st.button("Gem status", key=f"reservation_status_btn_{r['id']}"):
+                            resp_update = api_patch(
+                                f"/reservations/{r['id']}/status",
+                                json={"status": new_status},
+                                token=st.session_state.token,
+                            )
+                            if resp_update.status_code == 200:
+                                st.success("Status opdateret")
+                                st.rerun()
+                            else:
+                                st.error(f"Fejl ved opdatering: {resp_update.text}")
+
+    # ---------- OPRET NY AFHENTNING ----------
+    with tab_create:
+        if role not in ["DATAREG", "LEDELSE", "ADMIN"]:
+            st.info("Kun dataregistrering/ledelse/admin kan oprette afhentninger.")
+            return
+
+        st.subheader("Opret ny afhentning")
+
+        # Hent aktive lejeaftaler (vi bruger vehicle_id herfra)
+        active_leases: list[dict] = []
+        try:
+            leases_resp = api_get("/leases", params={"status": "ACTIVE"}, token=st.session_state.token)
+            if leases_resp.status_code == 200:
+                active_leases = leases_resp.json()
+            else:
+                st.warning(f"Kunne ikke hente aktive lejeaftaler: {leases_resp.text}")
+        except Exception as e:
+            st.warning(f"Fejl ved hentning af aktive lejeaftaler: {e}")
+
+        if not active_leases:
+            st.info("Der findes ingen aktive lejeaftaler.")
+            return
+
+        leases_options = [
+            f"Lease #{l['id']} – {l['customer_name']} – {l['car_model']} (vehicle_id={l.get('vehicle_id')})"
+            for l in active_leases
+        ]
+        leases_map = {label: l for label, l in zip(leases_options, active_leases)}
+
+        selected_label = st.selectbox("Vælg lejeaftale", options=leases_options)
+        selected_lease = leases_map[selected_label]
+        lease_id = selected_lease["id"]
+        vehicle_id = selected_lease.get("vehicle_id")
+
+        pickup_date_input = st.date_input("Afhentningsdato", value=date.today())
+        pickup_time_input = st.time_input("Afhentningstidspunkt", value=time(10, 0))
+
+        # Vis lokation som info (kommer fra Fleet – backend bruger samme logik)
+        default_location = ""
+        if vehicle_id is not None:
+            try:
+                v_resp = api_get(f"/fleet/vehicles/{vehicle_id}", token=st.session_state.token)
+                if v_resp.status_code == 200:
+                    v = v_resp.json()
+                    default_location = v.get("delivery_location") or ""
+            except Exception as e:
+                st.info(f"Kunne ikke hente lokation fra flåden: {e}")
+
+        st.markdown(f"**Afhentningssted (fra flåde):** {default_location or 'Ukendt'}")
+
+        if st.button("Gem afhentning"):
+            pickup_dt = datetime.combine(pickup_date_input, pickup_time_input)
+            payload = {
+                "lease_id": lease_id,
+                "vehicle_id": vehicle_id,
+                "pickup_date": pickup_dt.isoformat(),
+                # pickup_location sendes ikke – backend finder den via Fleet
+            }
+            resp = api_post("/reservations", json=payload, token=st.session_state.token)
+            if resp.status_code == 201:
+                st.success("Afhentning oprettet")
+                st.rerun()
+            else:
+                st.error(f"Fejl ved oprettelse: {resp.text}")
 
 
 def page_damages():
@@ -545,9 +740,10 @@ def render_sidebar():
 
             # Byg menuen (admin kun for ADMIN/LEDELSE)
             menu_options = {
-                "Dashboard": "📊 Dashboard",
-                "Lejeaftaler": "🚗 Lejeaftaler",
-                "Skader": "🛠️ Skader",
+                "Dashboard": "Dashboard",
+                "Lejeaftaler": "Lejeaftaler",
+                "Afhentning": "Afhentning",
+                "Skader": "Skader",
             }
 
              # Flåde-menu til relevante roller
@@ -556,7 +752,7 @@ def render_sidebar():
 
 
             if role in ("ADMIN", "LEDELSE"):
-                menu_options["Admin"] = "👤 Admin"
+                menu_options["Admin"] = "Admin"
 
             keys = list(menu_options.keys())
             labels = list(menu_options.values())
@@ -628,6 +824,8 @@ def main():
             page_fleet()
         elif page == "Lejeaftaler":
             page_leases()
+        elif page == "Afhentning":
+            page_reservations()
         elif page == "Skader":
             page_damages()
         elif page == "Admin":

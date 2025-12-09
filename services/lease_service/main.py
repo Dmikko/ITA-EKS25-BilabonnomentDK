@@ -15,6 +15,7 @@ from database import (
 RKI_BASE_URL = os.getenv("RKI_BASE_URL", "http://rki_service:5005")
 # Fleet-service kører som egen container på docker-netværket
 FLEET_BASE_URL = os.getenv("FLEET_BASE_URL", "http://fleet_service:5006")
+DAMAGE_BASE_URL = os.getenv("DAMAGE_BASE_URL", "http://damage_service:5003")
 
 
 app = Flask(__name__)
@@ -44,6 +45,40 @@ def call_rki_check(customer_cpr: str | None):
     except Exception as e:
         # Hvis RKI er nede, vil vi stadig kunne oprette aftale
         return "PENDING", None, f"RKI-fejl: {e}"
+
+
+def has_open_damages(lease_id: int) -> tuple[bool, str | None]:
+    """
+    Tjekker om der findes åbne skader for en given lease via DamageService.
+    Returnerer (has_open, error_message). error_message = None hvis alt ok.
+    """
+    try:
+        resp = requests.get(
+            f"{DAMAGE_BASE_URL}/damages",
+            params={"lease_id": lease_id, "status": "OPEN"},
+            timeout=5,
+        )
+    except Exception as e:
+        return False, f"Kunne ikke kontakte DamageService: {e}"
+
+    if resp.status_code != 200:
+        try:
+            data = resp.json()
+            msg = data.get("error", resp.text)
+        except Exception:
+            msg = resp.text
+        return False, f"DamageService fejl ({resp.status_code}): {msg}"
+
+    try:
+        damages = resp.json()
+    except Exception as e:
+        return False, f"Ugyldigt svar fra DamageService: {e}"
+
+    if isinstance(damages, list) and len(damages) > 0:
+        return True, None
+    return False, None
+
+
 
 def call_fleet_allocate(car_model: str, lease_id: int):
     """
@@ -169,6 +204,36 @@ def create_lease_endpoint():
     return jsonify(dict(lease)), 201
 """""
 
+def fetch_monthly_price_from_fleet(model_name: str) -> tuple[float | None, str | None]:
+    """
+    Henter månedlig pris for en given bilmodel fra FleetService.
+    Strategi: finder første AVAILABLE bil med den model og bruger dens monthly_price.
+    Returnerer (price, error_message).
+    """
+    try:
+        resp = requests.get(
+            f"{FLEET_BASE_URL}/vehicles/pricing/by-model",
+            params={"model_name": model_name},
+            timeout=5,
+        )
+    except Exception as e:
+        return None, f"Kunne ikke kontakte FleetService: {e}"
+
+    if resp.status_code != 200:
+        try:
+            data = resp.json()
+            msg = data.get("error", resp.text)
+        except Exception:
+            msg = resp.text
+        return None, f"FleetService fejl ({resp.status_code}): {msg}"
+
+    data = resp.json()
+    price = data.get("monthly_price")
+    if price is None:
+        return None, "Ingen pris fundet for denne bilmodel i flåden."
+
+    return float(price), None
+
 
 def call_fleet_allocate(car_model: str, lease_id: int):
     """
@@ -210,7 +275,6 @@ def create_lease_endpoint():
         "car_model",
         "start_date",
         "end_date",
-        "monthly_price",
     ]
     missing = [field for field in required if field not in data]
     if missing:
@@ -222,6 +286,18 @@ def create_lease_endpoint():
 
     data["rki_status"] = rki_status
     data["rki_score"] = rki_score
+
+ # Hent pris fra flåden på baggrund af car_model
+    car_model = data["car_model"]
+    monthly_price, price_err = fetch_monthly_price_from_fleet(car_model)
+
+    if monthly_price is None:
+        return jsonify({
+            "error": "Kunne ikke fastsætte månedlig pris ud fra flådedata.",
+            "details": price_err,
+        }), 400
+
+    data["monthly_price"] = monthly_price
 
     # Standard status på lease, hvis den ikke er sat
     data.setdefault("status", "ACTIVE")
@@ -302,6 +378,67 @@ def change_status(lease_id):
         updated_dict["fleet_update"] = fleet_result
 
     return jsonify(updated_dict), 200
+
+
+@app.patch("/leases/<int:lease_id>/end")
+def end_lease(lease_id):
+    """
+    Afslutter en lejeaftale:
+    - Tjekker om der er åbne skader via DamageService
+    - Sætter lease.status = DAMAGED hvis der er skader, ellers COMPLETED
+    - Opdaterer bilens status i FleetService:
+        - DAMAGED -> vehicle.status = DAMAGED
+        - COMPLETED -> vehicle.status = AVAILABLE
+    """
+    lease = get_lease_by_id(lease_id)
+    if lease is None:
+        return jsonify({"error": "lease not found"}), 404
+
+    lease_dict = dict(lease)
+    vehicle_id = lease_dict.get("vehicle_id")
+
+    # 1) Tjek skader
+    has_damage, damage_err = has_open_damages(lease_id)
+    if damage_err:
+        return jsonify({
+            "error": "Kunne ikke afgøre skadesstatus for lejeaftalen.",
+            "details": damage_err,
+        }), 503
+
+    # 2) Bestem ny lease-status
+    new_status = "DAMAGED" if has_damage else "COMPLETED"
+
+    # 3) Opdater lease-status i egen DB
+    update_lease_status(lease_id, new_status)
+
+    # 4) Forsøg at opdatere vehicle-status i Fleet
+    fleet_error = None
+    if vehicle_id is not None:
+        target_vehicle_status = "DAMAGED" if has_damage else "AVAILABLE"
+        try:
+            resp = requests.patch(
+                f"{FLEET_BASE_URL}/vehicles/{vehicle_id}/status",
+                json={"status": target_vehicle_status},
+                timeout=5,
+            )
+            if resp.status_code not in (200, 204):
+                try:
+                    data = resp.json()
+                    msg = data.get("error", resp.text)
+                except Exception:
+                    msg = resp.text
+                fleet_error = f"FleetService fejl ({resp.status_code}): {msg}"
+        except Exception as e:
+            fleet_error = f"Kunne ikke opdatere bilstatus i FleetService: {e}"
+
+    # 5) Returner opdateret lease
+    updated = get_lease_by_id(lease_id)
+    result = dict(updated)
+    result["ended_status"] = new_status
+    if fleet_error:
+        result["fleet_update_error"] = fleet_error
+
+    return jsonify(result), 200
 
 
 

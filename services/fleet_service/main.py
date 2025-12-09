@@ -111,6 +111,33 @@ def set_vehicle_status(vehicle_id: int):
     return jsonify(row_to_dict(updated)), 200
 
 
+@app.get("/vehicles/pricing/by-model")
+def get_pricing_by_model():
+    """
+    Returnerer månedlig pris for en given bilmodel baseret på flådedata.
+    Vi finder første AVAILABLE bil med den model og bruger dens monthly_price.
+    """
+    model_name = request.args.get("model_name")
+    if not model_name:
+        return jsonify({"error": "model_name query parameter is required"}), 400
+
+    row = find_available_by_model(model_name)
+    if row is None:
+        return jsonify({"error": f"Ingen AVAILABLE biler fundet for modellen '{model_name}'"}), 404
+
+    v = dict(row)
+    return jsonify({
+        "model_name": v.get("model_name"),
+        "monthly_price": v.get("monthly_price"),
+        "example_vehicle_id": v.get("id"),
+        "status": v.get("status"),
+    }), 200
+
+
+
+
+
+
 if __name__ == "__main__":
     # Lokalt debug-run. I Docker køres den typisk via gunicorn eller flask run.
     app.run(host="0.0.0.0", port=5006, debug=True)

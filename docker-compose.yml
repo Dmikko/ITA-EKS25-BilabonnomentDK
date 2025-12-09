@@ -18,6 +18,8 @@ services:
     environment:
       - RKI_BASE_URL=http://rki_service:5005
       - LEASE_DB_PATH=/app/lease.db
+      - FLEET_BASE_URL=http://host.docker.internal:5006
+      - DAMAGE_BASE_URL=http://damage_service:5003
     volumes:
       - ./services/lease_service/lease.db:/app/lease.db
 
@@ -28,6 +30,7 @@ services:
       - "5003:5003"
     environment:
       - FLEET_BASE_URL=http://host.docker.internal:5006
+      - LEASE_BASE_URL=http://lease_service:5002
     volumes:
       - ./services/damage_service/damage.db:/app/damage.db
 
@@ -58,6 +61,19 @@ services:
       - "5005:5005"
 
 
+
+  reservation_service:
+    build: ./services/reservation_service
+    container_name: reservation_service
+    ports:
+      - "5007:5007"
+    environment:
+      - FLEET_BASE_URL=http://fleet_service:5006
+    volumes:
+      - ./services/reservation_service/reservation.db:/app/reservation.db
+
+
+
   gateway:
     build: ./gateway
     container_name: gateway
@@ -71,7 +87,7 @@ services:
       - REPORT_BASE_URL=http://host.docker.internal:5004
       - RKI_BASE_URL=http://host.docker.internal:5005
       - FLEET_BASE_URL=http://host.docker.internal:5006
-
+      - RESERVATION_BASE_URL=http://host.docker.internal:5007
       - AUTH_SECRET=supersecret
     depends_on:
       - auth_service
@@ -80,7 +96,7 @@ services:
       - reporting_service
       - rki_service
       - fleet_service
-
+      - reservation_service
 
   frontend:
     build: ./frontend
