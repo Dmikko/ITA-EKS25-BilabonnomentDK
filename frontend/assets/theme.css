@@ -1,0 +1,348 @@
+/* ============================
+   Global app styling
+   ============================ */
+
+html, body, [class*="css"] {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
+}
+
+/* Selve app-baggrunden */
+.stApp {
+    background-color: #0f1115;
+    color: #e4e6eb;
+}
+
+/* Gør indhold mindre "luftigt" og mere dashboard-agtigt */
+.block-container {
+    padding-top: 1.5rem;
+    padding-bottom: 2rem;
+    padding-left: 2.5rem;
+    padding-right: 2.5rem;
+}
+
+/* Fjern standard Streamlit footer / menu (kan justeres) */
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
+header { background: transparent; }
+
+/* Links */
+a {
+    color: #4ba3ff;
+}
+a:hover {
+    color: #79b8ff;
+}
+
+/* ============================
+   Sidebar
+   ============================ */
+
+section[data-testid="stSidebar"] {
+    background-color: #111319 !important;
+    border-right: 1px solid #222631;
+}
+
+/* Sidebar overskrift og tekst */
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3,
+section[data-testid="stSidebar"] h4,
+section[data-testid="stSidebar"] h5,
+section[data-testid="stSidebar"] h6 {
+    color: #ffffff;
+}
+
+/* Sidebar radio menu (navigation) */
+section[data-testid="stSidebar"] [data-baseweb="radio"] > div {
+    background: #171a22;
+    border-radius: 10px;
+    padding: 8px;
+}
+
+/* Selve radio-knapperne */
+section[data-testid="stSidebar"] [data-baseweb="radio"] label {
+    color: #cfd3e0;
+    font-weight: 500;
+}
+
+/* Marker valgt element tydeligere */
+section[data-testid="stSidebar"] [data-baseweb="radio"] div[role="radio"][aria-checked="true"] {
+    background: linear-gradient(90deg, #1c7ed6, #3bc9db);
+    border-radius: 8px;
+    color: #ffffff;
+}
+
+/* ============================
+   Knapper
+   ============================ */
+
+.stButton > button {
+    background: #1f2937;
+    color: #e5e7eb;
+    border-radius: 999px;
+    padding: 0.45rem 1.2rem;
+    border: 1px solid #374151;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 150ms ease, border-color 150ms ease, transform 80ms ease;
+}
+
+.stButton > button:hover {
+    background: #2563eb;
+    border-color: #3b82f6;
+}
+
+.stButton > button:active {
+    transform: translateY(1px);
+    background: #1d4ed8;
+}
+
+/* Secondary-stil knapper (f.eks. i forms) kan matches via data-testid hvis ønsket */
+
+/* ============================
+   Inputs (text, number, select, date)
+   ============================ */
+
+input[type="text"],
+input[type="number"],
+input[type="email"],
+textarea,
+div[data-baseweb="select"],
+div[data-baseweb="input"],
+div[data-baseweb="textarea"] {
+    background-color: #111827 !important;
+    color: #e5e7eb !important;
+    border-radius: 8px !important;
+    border: 1px solid #374151 !important;
+}
+
+/* Placeholder-tekst */
+input::placeholder,
+textarea::placeholder {
+    color: #6b7280;
+}
+
+/* Date- og time-input wrapper */
+div[data-baseweb="input"] input {
+    background-color: #111827 !important;
+    color: #e5e7eb !important;
+}
+
+/* ============================
+   Expander / fold-ud panels
+   ============================ */
+
+details {
+    border-radius: 10px;
+}
+
+/* Overskrift på expander */
+div.streamlit-expanderHeader {
+    background-color: #111827 !important;
+    color: #f9fafb !important;
+    border-radius: 10px !important;
+    padding: 8px 12px !important;
+    border: 1px solid #1f2937 !important;
+}
+
+/* Indholdet i expanderen */
+div.streamlit-expanderContent {
+    background-color: #020617 !important;
+    border-radius: 0 0 10px 10px !important;
+    border: 1px solid #111827 !important;
+    border-top: none !important;
+    padding: 12px 16px !important;
+}
+
+/* ============================
+   Tabs
+   ============================ */
+
+div[data-baseweb="tab-list"] {
+    background-color: #111827;
+    border-radius: 999px;
+    padding: 4px;
+    margin-bottom: 1rem;
+}
+
+/* Tab-knapper */
+button[role="tab"] {
+    border-radius: 999px !important;
+    padding: 0.4rem 1.2rem !important;
+    color: #9ca3af !important;
+}
+
+/* Valgt tab */
+button[role="tab"][aria-selected="true"] {
+    background: linear-gradient(90deg, #2563eb, #3b82f6) !important;
+    color: #f9fafb !important;
+}
+
+/* ============================
+   Metrics (st.metric)
+   ============================ */
+
+div[data-testid="stMetric"] {
+    background: #020617;
+    padding: 0.75rem 1rem;
+    border-radius: 10px;
+    border: 1px solid #1e293b;
+}
+
+/* Metric-label */
+div[data-testid="stMetric"] > label {
+    color: #9ca3af;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Metric-værdi */
+div[data-testid="stMetricValue"] {
+    color: #f9fafb;
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+/* ============================
+   Tables / dataframes
+   ============================ */
+
+[data-testid="stTable"] table {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+[data-testid="stTable"] th {
+    background-color: #111827;
+    color: #e5e7eb;
+    border-bottom: 1px solid #1f2937;
+    padding: 0.5rem;
+}
+
+[data-testid="stTable"] td {
+    background-color: #020617;
+    color: #e5e7eb;
+    border-bottom: 1px solid #111827;
+    padding: 0.5rem;
+}
+
+/* Zebra rows */
+[data-testid="stTable"] tr:nth-child(even) td {
+    background-color: #030712;
+}
+
+/* ============================
+   Divider, underoverskrifter, tekst
+   ============================ */
+
+hr {
+    border: none;
+    border-top: 1px solid #1f2937;
+    margin: 1rem 0;
+}
+
+h1, h2, h3 {
+    color: #f9fafb;
+}
+
+h4, h5, h6 {
+    color: #e5e7eb;
+}
+
+p {
+    color: #e5e7eb;
+}
+
+/* Subheader-tekst (st.subheader etc.) */
+.css-10trblm, .css-1v0mbdj {
+    /* fallback til nogle af Streamlits standards */
+    font-weight: 600;
+}
+
+/* ============================
+   "Cards" generelt (kan bruges til KPI-sektioner)
+   ============================ */
+
+.card {
+    background: #020617;
+    border-radius: 12px;
+    border: 1px solid #1e293b;
+    padding: 1rem 1.25rem;
+    margin-bottom: 0.75rem;
+}
+
+/* Hvis du vil lave card-overskrifter */
+.card-title {
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #9ca3af;
+    margin-bottom: 0.25rem;
+}
+
+.card-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #f9fafb;
+}
+
+/* ============================
+   Advarsler / info bokse
+   ============================ */
+
+/* st.info */
+div[data-testid="stAlert"][class*="st-info"] {
+    background-color: #1e293b;
+    border-radius: 10px;
+    border: 1px solid #3b82f6;
+}
+
+/* st.error */
+div[data-testid="stAlert"][class*="st-error"] {
+    background-color: #7f1d1d;
+    border-radius: 10px;
+    border: 1px solid #f87171;
+}
+
+/* st.success */
+div[data-testid="stAlert"][class*="st-success"] {
+    background-color: #064e3b;
+    border-radius: 10px;
+    border: 1px solid #22c55e;
+}
+
+/* st.warning */
+div[data-testid="stAlert"][class*="st-warning"] {
+    background-color: #78350f;
+    border-radius: 10px;
+    border: 1px solid #facc15;
+}
+
+/* ============================
+   Små layout tweaks
+   ============================ */
+
+/* Mindre “padding” omkring formularer */
+.stForm {
+    padding: 0.5rem 0.75rem;
+    border-radius: 10px;
+    background-color: #020617;
+    border: 1px solid #1e293b;
+}
+
+/* Scrollbars (let dark-theme makeover) */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: #020617;
+}
+::-webkit-scrollbar-thumb {
+    background-color: #4b5563;
+    border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background-color: #6b7280;
+}

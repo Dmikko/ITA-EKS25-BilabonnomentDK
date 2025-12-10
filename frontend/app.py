@@ -2,6 +2,10 @@ import streamlit as st
 import requests
 import os
 from datetime import date, datetime, time
+from streamlit_autorefresh import st_autorefresh
+import pathlib
+
+
 
 
 # ---- UI helpers ----
@@ -88,6 +92,19 @@ def init_session_state():
     if "page" not in st.session_state:
         st.session_state.page = "Dashboard"
 
+        
+def load_css_asset(name: str):
+    """
+    Loader en CSS-fil fra ./assets/<name> og injicerer den i Streamlit.
+    """
+    css_path = pathlib.Path("assets") / name
+    if css_path.exists():
+        css = css_path.read_text()
+        st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    else:
+        # Valgfrit: lidt debug hvis filen ikke findes
+        st.write(f"Kunne ikke finde CSS fil: {css_path}")
+
 
 def add_months(start_date: date, months: int) -> date:
     """
@@ -115,9 +132,18 @@ def add_months(start_date: date, months: int) -> date:
 def page_dashboard():
     st.header("Dashboard (KPI overblik)")
 
-    if st.session_state.role not in ["FORRET", "LEDELSE", "ADMIN", "DATAREG", "SKADE"]:
+    if st.session_state.role not in ["FORRET", "LEDELSE", "ADMIN"]:
         st.info("Du har ikke adgang til dashboardet.")
         return
+    
+
+    # Auto-refresh hvert 60. sekund
+    st.caption("Data opdateres automatisk hvert 60. sekund.")
+    st_autorefresh(interval=60_000, key="dashboard_autorefresh")
+
+    # Mulighed for manuelt refresh
+    if st.button("Opdater nu"):
+        st.rerun()
 
     resp = api_get("/reporting/kpi/overview", token=st.session_state.token)
     if resp.status_code != 200:
@@ -128,21 +154,147 @@ def page_dashboard():
     kpi = data.get("kpi", {})
     st.write(f"Genereret: {data.get('generated_at')}")
 
-    col1, col2, col3 = st.columns(3)
+    # --- Hent KPI-værdier med defaults ---
+    active_leases = kpi.get("active_leases", 0)
+
+    fleet_counts = kpi.get("fleet_status_counts", {}) or {}
+    fleet_available = fleet_counts.get("AVAILABLE", 0)
+    fleet_leased = fleet_counts.get("LEASED", 0)
+    fleet_damaged = fleet_counts.get("DAMAGED", 0)
+    fleet_repair = fleet_counts.get("REPAIR", 0)
+    fleet_out_of_service = fleet_damaged + fleet_repair
+
+    pickups_today = kpi.get("pickups_today", 0)
+    pickups_next_7 = kpi.get("pickups_next_7_days", 0)
+
+    leases_expiring_soon_count = kpi.get("leases_expiring_soon_count", 0)
+
+    open_damages_count = kpi.get("open_damages_count", 0)
+    open_damages_total_cost = kpi.get("open_damages_total_cost", 0.0)
+
+    monthly_revenue = kpi.get("monthly_revenue", []) or []
+    top_models = kpi.get("top_models", []) or []
+
+    upcoming_pickups = kpi.get("upcoming_pickups", []) or []
+    expiring_leases = kpi.get("expiring_leases", []) or []
+    recent_damages = kpi.get("recent_damages", []) or []
+
+    # ---------- ØVERSTE KPI-RÆKKER ----------
+
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Aktive abonnementer", kpi.get("active_leases", 0))
+        st.metric("Aktive lejeaftaler", active_leases)
     with col2:
-        st.metric("Aftaler med skader (afsluttede)", kpi.get("completed_leases_with_damage", 0))
+        st.metric("Biler i drift (LEASED)", fleet_leased)
     with col3:
-        st.metric("Gns. skadesomkostning", f"{kpi.get('avg_damage_cost', 0):.0f} kr.")
+        st.metric("Ledige biler (AVAILABLE)", fleet_available)
+    with col4:
+        st.metric("Ude af drift (DAMAGED + REPAIR)", fleet_out_of_service)
 
+    col5, col6, col7, col8 = st.columns(4)
+    with col5:
+        st.metric("Afhentninger i dag", pickups_today)
+    with col6:
+        st.metric("Afhentninger næste 7 dage", pickups_next_7)
+    with col7:
+        st.metric("Lejeaftaler der udløber snart", leases_expiring_soon_count)
+    with col8:
+        st.metric("Åbne skader", open_damages_count, f"{open_damages_total_cost:.0f} kr.")
+
+    st.markdown("---")
+
+    # ---------- FLÅDEFORDELING ----------
+    st.subheader("Flådefordeling")
+
+    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+    with col_f1:
+        st.write(f"**AVAILABLE:** {fleet_available}")
+    with col_f2:
+        st.write(f"**LEASED:** {fleet_leased}")
+    with col_f3:
+        st.write(f"**DAMAGED:** {fleet_damaged}")
+    with col_f4:
+        st.write(f"**REPAIR:** {fleet_repair}")
+
+    st.markdown("---")
+
+    # ---------- KOMMENDE AFHENTNINGER ----------
+    st.subheader("Kommende afhentninger (næste 7 dage)")
+
+    if not upcoming_pickups:
+        st.info("Ingen planlagte afhentninger i de næste 7 dage.")
+    else:
+        for r in upcoming_pickups:
+            label = (
+                f"Reservation #{r.get('id','?')} – Lease {r.get('lease_id','?')} – "
+                f"{r.get('pickup_date','?')} – {r.get('status','')}"
+            )
+            with st.expander(label):
+                st.markdown(f"**Lease ID:** {r.get('lease_id','?')}")
+                st.markdown(f"**Afhentningsdato:** {r.get('pickup_date','?')}")
+                st.markdown(f"**Afhentningssted:** {r.get('pickup_location') or 'Ukendt'}")
+                st.markdown(f"**Status:** {r.get('status','?')}")
+
+    st.markdown("---")
+
+    # ---------- LEASES DER UDLØBER SNART ----------
+    st.subheader("Lejeaftaler der udløber snart (næste 30 dage)")
+
+    if not expiring_leases:
+        st.info("Ingen lejeaftaler udløber inden for de næste 30 dage.")
+    else:
+        for l in expiring_leases:
+            label = (
+                f"Lease #{l.get('id','?')} – {l.get('customer_name','?')} – "
+                f"{l.get('car_model','?')} (slut: {l.get('end_date','?')})"
+            )
+            with st.expander(label):
+                st.markdown(f"**Lease ID:** {l.get('id','?')}")
+                st.markdown(f"**Kunde:** {l.get('customer_name','?')}")
+                st.markdown(f"**Bil:** {l.get('car_model','?')}")
+                st.markdown(f"**Slutdato:** {l.get('end_date','?')}")
+                st.markdown(f"**Dage til slut:** {l.get('days_to_end','?')}")
+
+    st.markdown("---")
+
+    # ---------- SKADEOVERBLIK ----------
+    st.subheader("Skadeoverblik (seneste skader)")
+
+    if not recent_damages:
+        st.info("Ingen registrerede skader.")
+    else:
+        for d in recent_damages:
+            label = (
+                f"Skade #{d.get('id','?')} – Lease {d.get('lease_id','?')} – "
+                f"{d.get('category','?')} – {d.get('status','?')}"
+            )
+            with st.expander(label):
+                st.markdown(f"**Skade ID:** {d.get('id','?')}")
+                st.markdown(f"**Lease ID:** {d.get('lease_id','?')}")
+                st.markdown(f"**Kategori:** {d.get('category','?')}")
+                st.markdown(f"**Estimeret omkostning:** {d.get('estimated_cost','?')} kr.")
+                st.markdown(f"**Status:** {d.get('status','?')}")
+                st.markdown(f"**Registreret:** {d.get('detected_at','?')}")
+
+    st.markdown("---")
+
+    # ---------- ØKONOMI / OMSÆTNING ----------
     st.subheader("Omsætning pr. måned")
-    for row in kpi.get("monthly_revenue", []):
-        st.write(f"{row['month']}: {row['total_revenue']} kr.")
 
-    st.subheader("Top 3 bilmodeller")
-    for row in kpi.get("top_models", []):
-        st.write(f"{row['car_model']}: {row['count']} aftaler")
+    if not monthly_revenue:
+        st.info("Ingen omsætningsdata endnu.")
+    else:
+        for row in monthly_revenue:
+            st.write(f"{row['month']}: {row['total_revenue']:.0f} kr.")
+
+    st.subheader("Top 3 bilmodeller (antal aftaler)")
+
+    if not top_models:
+        st.info("Ingen data for bilmodeller endnu.")
+    else:
+        for row in top_models:
+            st.write(f"{row['car_model']}: {row['count']} aftaler")
+
 
 
 
@@ -738,27 +890,32 @@ def render_sidebar():
             st.write(f"Logget ind som: **{user['username']}** ({role})")
             st.markdown("### Menu")
 
-            # Byg menuen (admin kun for ADMIN/LEDELSE)
-            menu_options = {
-                "Dashboard": "Dashboard",
-                "Lejeaftaler": "Lejeaftaler",
-                "Afhentning": "Afhentning",
-                "Skader": "Skader",
-            }
+            menu_options = {}
 
-             # Flåde-menu til relevante roller
+            # Dashboard kun til FORRET, LEDELSE, ADMIN
+            if role in ("FORRET", "LEDELSE", "ADMIN"):
+                menu_options["Dashboard"] = "Dashboard"
+
+            # Fælles menupunkter
+            menu_options["Lejeaftaler"] = "Lejeaftaler"
+            menu_options["Afhentning"] = "Afhentning"
+            menu_options["Skader"] = "Skader"
+
+            # Flåde-menu til relevante roller
             if role in ("DATAREG", "SKADE", "FORRET", "LEDELSE", "ADMIN"):
-                menu_options["Flåde"] = "🚘 Flåde"
+                menu_options["Flåde"] = "Flåde"
 
-
+            # Admin kun til ADMIN/LEDELSE
             if role in ("ADMIN", "LEDELSE"):
                 menu_options["Admin"] = "Admin"
 
             keys = list(menu_options.keys())
             labels = list(menu_options.values())
 
-            # Find default index ud fra nuværende side
-            current_page = st.session_state.page or "Dashboard"
+            current_page = st.session_state.page or keys[0]
+            if current_page not in keys:
+                current_page = keys[0]
+
             try:
                 default_idx = keys.index(current_page)
             except ValueError:
@@ -770,7 +927,6 @@ def render_sidebar():
                 index=default_idx,
             )
 
-            # Reverse lookup: label -> key
             selected_page = keys[labels.index(choice)]
             st.session_state.page = selected_page
 
@@ -778,10 +934,11 @@ def render_sidebar():
                 st.session_state.token = None
                 st.session_state.user = None
                 st.session_state.role = None
-                st.session_state.page = "Dashboard"
+                st.session_state.page = keys[0]
                 st.rerun()
         else:
             st.info("Log ind for at få adgang.")
+
 
 
 def render_login():
@@ -803,6 +960,7 @@ def render_login():
 
 def main():
     init_session_state()
+    load_css_asset("theme.css")  # loader frontend/assets/theme.css
 
     if st.session_state.token is None:
         render_login()
