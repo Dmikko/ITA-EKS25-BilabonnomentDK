@@ -1,0 +1,11 @@
+id;lease_id;vehicle_id;category;description;estimated_cost;detected_at;status;created_by_user_id
+1;2;11;alvorlig;uheld;10000.0;2025-12-09T19:58:01.159516;OPEN;
+2;16;29;mellem;Kørte ind i lygtepæl;4500.0;2025-12-11T11:49:17.058791;OPEN;
+3;12;21;kosmetisk;Konen blev sur ;2500.0;2025-12-11T11:49:50.911730;OPEN;
+4;10;7;kosmetisk;Ridset lap på højre bagskærm;3500.0;2025-12-11T11:51:01.925126;OPEN;
+5;3;17;alvorlig;Skade på forhjulsophæng efter kantstensuheld;11500.0;2025-12-11T11:51:47.185697;OPEN;
+6;13;20;alvorlig;Bagendekollision, anhængertræk og kofanger ødelagt;24500.0;2025-12-11T11:52:27.861360;OPEN;
+7;11;10;kosmetisk;Stenslag;1800.0;2025-12-11T11:53:19.590562;OPEN;
+8;3;17;mellem;Dør sidder fast efter sammenstød;3500.0;2025-12-11T11:54:59.027781;OPEN;
+9;2;11;alvorlig;Kørte ind i en mur;16500.0;2025-12-11T11:56:10.284913;OPEN;
+10;2;11;kosmetisk;ridse i lakken;1600.0;2025-12-11T11:56:55.988172;OPEN;
